@@ -1,0 +1,192 @@
+/* ── Orbit UI — night theme + app styles ─────────────────────────────
+   Theme values lifted from ambientcss.vercel.app "Night" preset:
+   lightX .7 · lightY -.7 · keyLight .125 · fillLight 0
+   lightHue 250 · lightSaturation 30% · lumeHue 16 · led #6366f1     */
+
+:root {
+  --amb-light-x: .7;
+  --amb-light-y: -.7;
+  --amb-key-light-intensity: .125;
+  --amb-fill-light-intensity: 0;
+  --amb-light-hue: 250;
+  --amb-light-saturation: 30%;
+  --amb-lume-hue: 16;
+  --amb-led-color: #6366f1;
+
+  /* app palette (derived from the night scene) */
+  --ink: #c7d2fe;               /* indigo-200 text            */
+  --ink-dim: #64748b;           /* slate labels               */
+  --trace: #818cf8;             /* live curve                 */
+  --trace-dim: #3b3f6e;         /* inactive curve             */
+  --pt-fill: #e0e7ff;
+  --pt-stroke: #6366f1;
+  --well: hsl(250 35% 7%);
+  --well-line: hsl(250 25% 16%);
+  --span-fill: hsl(250 20% 12% / .82);
+  --span-edge: #7885b3;
+  --chip-fill: hsl(243 60% 55% / .16);
+  --chip-line: hsl(238 70% 68% / .5);
+  --sim: hsl(16 100% 72%);      /* the night lume — warm coral */
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: Michroma, sans-serif;
+  color: var(--ink);
+  /* page sits darker than the panels */
+  --amb-albedo: color(srgb-linear .28 .28 .34);
+  overflow-x: hidden;
+}
+
+/* ── top bar ─────────────────────────────────────────────────────── */
+.topbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 14px 24px;
+  padding: 18px 22px 10px;
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand h1 { margin: 0; font-size: 21px; letter-spacing: .12em; font-weight: 400; }
+.brand h1 span { color: var(--trace); }
+.tagline { font-size: 9px; letter-spacing: .14em; color: var(--ink-dim); text-transform: uppercase; }
+.programbar { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+
+.field { display: flex; align-items: center; gap: 7px; font-size: 9px; letter-spacing: .12em; color: var(--ink-dim); }
+.field input {
+  font-family: var(--mono); font-size: 13px; color: var(--ink);
+  background: var(--well); border: 1px solid var(--well-line);
+  border-radius: 7px; padding: 6px 8px; outline: none;
+}
+.field input:focus { border-color: var(--pt-stroke); box-shadow: 0 0 6px hsl(243 70% 60% / .5); }
+#progNum { width: 52px; }
+#progName { width: 110px; text-transform: uppercase; letter-spacing: .1em; }
+
+/* ambient buttons — keep caps compact */
+.amb-button { min-width: 0; }
+.amb-button .amb-button-cap { padding: 8px 16px; font-size: 10px; letter-spacing: .12em; white-space: nowrap; }
+
+.ghostbtn {
+  font-family: inherit; font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-dim); background: none; border: 1px solid var(--well-line);
+  border-radius: 7px; padding: 6px 12px; cursor: pointer;
+}
+.ghostbtn:hover { color: var(--ink); border-color: var(--span-edge); }
+.ghostbtn.on { color: var(--sim); border-color: var(--sim); }
+
+/* ── axis panels ─────────────────────────────────────────────────── */
+main { display: grid; gap: 20px; padding: 10px 22px 6px; max-width: 1180px; margin: 0 auto; box-sizing: border-box; }
+
+.axis-panel { padding: 16px 16px 12px; }
+
+.axis-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+  margin-bottom: 12px;
+}
+.axis-title { display: flex; align-items: baseline; gap: 10px; }
+.axis-title b { font-weight: 400; font-size: 16px; letter-spacing: .14em; }
+.axis-title small { font-size: 9px; letter-spacing: .12em; color: var(--ink-dim); }
+.axis-out {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 12px; color: var(--sim);
+  text-shadow: 0 0 8px hsl(16 100% 60% / .55);
+  min-width: 150px;
+}
+.axis-out .amb-led { width: 7px; height: 7px; }
+.axis-tools { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+.editor-well {
+  background: var(--well);
+  border: 1px solid var(--well-line);
+  border-radius: 12px;
+  box-shadow: inset 0 2px 9px hsl(250 40% 3% / .8), inset 0 -1px 0 hsl(250 20% 22% / .5);
+  overflow: hidden;
+}
+.editor-well svg { display: block; width: 100%; touch-action: none; user-select: none; -webkit-user-select: none; }
+
+/* svg text */
+svg text { font-family: Michroma, sans-serif; fill: var(--ink-dim); }
+svg .chip-label { fill: var(--ink); }
+svg .span-label { fill: var(--span-edge); letter-spacing: .08em; }
+
+/* ── popover ─────────────────────────────────────────────────────── */
+#popover {
+  position: absolute; z-index: 40; width: 236px; padding: 14px;
+  box-sizing: border-box;
+}
+#popover h3 {
+  margin: 0 0 10px; font-size: 10px; font-weight: 400; letter-spacing: .16em;
+  color: var(--ink); text-transform: uppercase;
+  display: flex; align-items: center; gap: 8px;
+}
+#popover h3 .amb-led { width: 6px; height: 6px; }
+.pop-rows { display: grid; gap: 8px; }
+.pop-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pop-row label { font-size: 8px; letter-spacing: .12em; color: var(--ink-dim); text-transform: uppercase; }
+.pop-row input, .pop-row select {
+  font-family: var(--mono); font-size: 12px; color: var(--ink);
+  background: var(--well); border: 1px solid var(--well-line);
+  border-radius: 6px; padding: 5px 7px; width: 84px; outline: none; box-sizing: border-box;
+}
+.pop-row input:focus, .pop-row select:focus { border-color: var(--pt-stroke); }
+.pop-note { font-family: var(--mono); font-size: 10px; color: var(--ink-dim); }
+.pop-sep { border: none; border-top: 1px solid var(--well-line); margin: 4px 0; }
+
+.mode-list { display: grid; gap: 6px; }
+.mode-btn {
+  display: flex; align-items: center; gap: 9px;
+  font-family: inherit; font-size: 9px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-dim); text-align: left;
+  background: var(--well); border: 1px solid var(--well-line); border-radius: 7px;
+  padding: 8px 10px; cursor: pointer;
+}
+.mode-btn .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: hsl(250 15% 25%); flex: none;
+}
+.mode-btn.on { color: var(--ink); border-color: var(--chip-line); background: var(--chip-fill); }
+.mode-btn.on .dot { background: var(--amb-led-color); box-shadow: 0 0 6px var(--amb-led-color); }
+
+.dangerbtn {
+  margin-top: 4px; width: 100%;
+  font-family: inherit; font-size: 8px; letter-spacing: .14em; text-transform: uppercase;
+  color: #f6a5a5; background: none; border: 1px solid hsl(0 40% 30%); border-radius: 7px;
+  padding: 7px; cursor: pointer;
+}
+.dangerbtn:hover { background: hsl(0 50% 20% / .4); }
+
+/* ── modal ───────────────────────────────────────────────────────── */
+#modalWrap { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 18px; }
+#modalWrap[hidden], #popover[hidden] { display: none; }
+#modalScrim { position: absolute; inset: 0; background: hsl(250 45% 3% / .7); }
+#modal {
+  position: relative; width: min(660px, 100%); max-height: 86vh;
+  display: flex; flex-direction: column; padding: 18px; box-sizing: border-box;
+}
+.modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.modal-head h2 { margin: 0; font-size: 11px; font-weight: 400; letter-spacing: .18em; }
+.modal-tabs { display: flex; gap: 6px; }
+#modalPre {
+  flex: 1; overflow: auto; margin: 0;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.55; color: var(--ink);
+  background: var(--well); border: 1px solid var(--well-line); border-radius: 10px;
+  padding: 14px; white-space: pre;
+}
+.modal-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
+
+/* ── footer ──────────────────────────────────────────────────────── */
+.hints {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+  padding: 8px 22px 26px; max-width: 1180px; margin: 0 auto; box-sizing: border-box;
+}
+.hints p { margin: 0; font-size: 8.5px; letter-spacing: .08em; line-height: 2; color: var(--ink-dim); }
+.hints b { color: var(--ink); font-weight: 400; }
+
+@media (max-width: 640px) {
+  .topbar { padding: 14px 12px 8px; }
+  main { padding: 8px 12px 4px; }
+  .programbar { margin-left: 0; width: 100%; }
+  .axis-out { min-width: 0; }
+  #popover { width: min(236px, calc(100vw - 20px)); }
+}

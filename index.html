@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Orbit UI — Assignment Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Michroma&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="ambient.css">
+<link rel="stylesheet" href="orbit.css">
+</head>
+<body class="ambient amb-surface">
+
+<header class="topbar">
+  <div class="brand">
+    <span class="amb-led" id="powerLed"></span>
+    <h1>ORBIT<span>·UI</span></h1>
+    <span class="tagline">assignment editor — concept demo</span>
+  </div>
+  <div class="programbar">
+    <label class="field">
+      <span>PGM</span>
+      <input id="progNum" type="number" min="1" max="128" value="1" inputmode="numeric">
+    </label>
+    <label class="field">
+      <span>NAME</span>
+      <input id="progName" type="text" maxlength="10" value="INIT" autocapitalize="characters" spellcheck="false">
+    </label>
+    <button class="amb-button ambx-press-sm" id="publishBtn" type="button">
+      <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Publish</span>
+    </button>
+  </div>
+</header>
+
+<main id="axes"></main>
+
+<footer class="hints">
+  <p>
+    <b>double&#8209;click / double&#8209;tap</b> curve to add a point &nbsp;·&nbsp;
+    <b>tap</b> a point, span, or CH·CC chip to configure &nbsp;·&nbsp;
+    <b>drag</b> span edges to resize, span body to move &nbsp;·&nbsp;
+    <b>drag</b> the ▲ marker to simulate the pedal
+  </p>
+  <button class="ghostbtn" id="resetBtn" type="button">reset demo</button>
+</footer>
+
+<div id="popover" class="ambient amb-surface amb-chamfer amb-elevation-3 amb-mat-blasted amb-rounded-lg" hidden></div>
+
+<div id="modalWrap" hidden>
+  <div id="modalScrim"></div>
+  <div id="modal" class="ambient amb-surface amb-chamfer amb-elevation-3 amb-mat-blasted amb-rounded-xl">
+    <div class="modal-head">
+      <h2>PUBLISHED SETTINGS</h2>
+      <div class="modal-tabs">
+        <button class="ghostbtn tab on" data-fmt="text" type="button">TEXT</button>
+        <button class="ghostbtn tab" data-fmt="json" type="button">JSON</button>
+      </div>
+    </div>
+    <pre id="modalPre"></pre>
+    <div class="modal-foot">
+      <button class="amb-button ambx-press-sm" id="copyBtn" type="button">
+        <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Copy</span>
+      </button>
+      <button class="amb-button ambx-press-sm" id="closeBtn" type="button">
+        <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Close</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script src="orbit.js"></script>
+</body>
+</html>
