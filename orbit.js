@@ -7,13 +7,63 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.4';
+const APP_VERSION = '1.5';
 
 /* ── state ───────────────────────────────────────────────────────── */
 
 const STORE_KEY = 'orbit_ui_state_v1';
 let uidn = 1;
 const uid = () => 's' + (uidn++) + '_' + Math.random().toString(36).slice(2, 7);
+
+/* per-axis layer defaults: layer 1 = the classic demo shapes,
+   layer 2 = simple ramps on CH 2 so the ghost reads clearly */
+function defaultLayers(key) {
+  const mk = (points, spans, defCh, baseCC) =>
+    ({ smooth: false, defCh, baseCC, regions: [], points, spans });
+  if (key === 'yaw') return [
+    mk(
+      [{ x: 0.08, y: 0 }, { x: 0.27, y: 70 }, { x: 0.46, y: 127 },
+       { x: 0.54, y: 127 }, { x: 0.73, y: 70 }, { x: 0.92, y: 0 }],
+      [{ id: uid(), lo: 0.00, hi: 0.08, mode: 'dead', ch: 1, note: 60 },
+       { id: uid(), lo: 0.46, hi: 0.54, mode: 'dead', ch: 1, note: 60 },
+       { id: uid(), lo: 0.92, hi: 1.00, mode: 'dead', ch: 1, note: 60 }],
+      1, 11),
+    mk(
+      [{ x: 0.06, y: 0 }, { x: 0.94, y: 127 }],
+      [{ id: uid(), lo: 0.00, hi: 0.06, mode: 'dead', ch: 2, note: 60 },
+       { id: uid(), lo: 0.94, hi: 1.00, mode: 'dead', ch: 2, note: 60 }],
+      2, 21),
+  ];
+  return [
+    mk(
+      [{ x: 0.06, y: 0 }, { x: 0.5, y: 50 }, { x: 0.94, y: 127 }],
+      [{ id: uid(), lo: 0.00, hi: 0.06, mode: 'dead', ch: 1, note: 60 },
+       { id: uid(), lo: 0.94, hi: 1.00, mode: 'dead', ch: 1, note: 60 }],
+      1, 1),
+    mk(
+      [{ x: 0.06, y: 127 }, { x: 0.94, y: 0 }],
+      [{ id: uid(), lo: 0.00, hi: 0.06, mode: 'dead', ch: 2, note: 60 },
+       { id: uid(), lo: 0.94, hi: 1.00, mode: 'dead', ch: 2, note: 60 }],
+      2, 22),
+  ];
+}
+
+/* migrate pre-v1.5 single-layer axes ({points,spans,...} on the axis) */
+function migrateAxes(axes) {
+  for (const key of ['yaw', 'pitch']) {
+    const a = axes[key];
+    if (!a.layers) {
+      a.layers = [
+        { smooth: !!a.smooth, defCh: 1, baseCC: a.baseCC || 1,
+          regions: a.regions || [], points: a.points || [], spans: a.spans || [] },
+        defaultLayers(key)[1],
+      ];
+      delete a.points; delete a.spans; delete a.regions;
+      delete a.smooth; delete a.baseCC;
+    }
+  }
+  return axes;
+}
 
 function defaultState() {
   return {
@@ -22,36 +72,25 @@ function defaultState() {
       yaw: {
         key: 'yaw', label: 'YAW', sub: 'left → right',
         endLabels: ['LEFT', 'RIGHT'], freeze: 'PITCH',
-        smooth: false, sim: 0.5,
-        points: [
-          { x: 0.08, y: 0 }, { x: 0.27, y: 70 }, { x: 0.46, y: 127 },
-          { x: 0.54, y: 127 }, { x: 0.73, y: 70 }, { x: 0.92, y: 0 },
-        ],
-        spans: [
-          { id: uid(), lo: 0.00, hi: 0.08, mode: 'dead', ch: 1, note: 60 },
-          { id: uid(), lo: 0.46, hi: 0.54, mode: 'dead', ch: 1, note: 60 },
-          { id: uid(), lo: 0.92, hi: 1.00, mode: 'dead', ch: 1, note: 60 },
-        ],
-        regions: [], baseCC: 11,
+        sim: 0.5, layers: defaultLayers('yaw'),
       },
       pitch: {
         key: 'pitch', label: 'PITCH', sub: 'heel → toe',
         endLabels: ['HEEL', 'TOE'], freeze: 'YAW',
-        smooth: false, sim: 0.35,
-        points: [{ x: 0.06, y: 0 }, { x: 0.5, y: 50 }, { x: 0.94, y: 127 }],
-        spans: [
-          { id: uid(), lo: 0.00, hi: 0.06, mode: 'dead', ch: 1, note: 60 },
-          { id: uid(), lo: 0.94, hi: 1.00, mode: 'dead', ch: 1, note: 60 },
-        ],
-        regions: [], baseCC: 1,
+        sim: 0.35, layers: defaultLayers('pitch'),
       },
     },
+    activeLayer: 0,
+    layerOn: [true, false], /* layer 2 ships off until enabled */
     library: [],
     setlist: [],
     loadedId: null,
     globalCh: 16, /* receive channel for incoming MIDI (or 'omni') */
   };
 }
+
+/* the active layer of an axis */
+const act = axis => axis.layers[state.activeLayer];
 
 let state = loadState();
 
@@ -65,6 +104,10 @@ function loadState() {
         s.setlist = s.setlist || [];
         if (s.loadedId === undefined) s.loadedId = null;
         if (s.globalCh === undefined) s.globalCh = 16;
+        migrateAxes(s.axes);
+        for (const en of s.library) if (en.axes) migrateAxes(en.axes);
+        if (s.activeLayer === undefined) s.activeLayer = 0;
+        if (!s.layerOn) s.layerOn = [true, false];
         return s;
       }
     }
@@ -112,7 +155,7 @@ function syncRegions(axis) {
     }
     while (takenCC.includes(nextCC)) nextCC++;
     takenCC.push(nextCC);
-    return { lo: g.lo, hi: g.hi, ch: 1, cc: nextCC };
+    return { lo: g.lo, hi: g.hi, ch: axis.defCh || 1, cc: nextCC };
   });
 }
 
@@ -218,7 +261,7 @@ function buildPanels() {
         <div class="axis-title"><b>${axis.label}</b><small>${axis.sub}</small></div>
         <div class="axis-out"><span class="amb-led"></span><span data-out></span></div>
         <div class="axis-tools">
-          <button class="ghostbtn ${axis.smooth ? 'on' : ''}" data-smooth type="button">smooth</button>
+          <button class="ghostbtn ${act(axis).smooth ? 'on' : ''}" data-smooth type="button">smooth</button>
           <button class="ghostbtn" data-addspan type="button">+ span</button>
         </div>
       </div>
@@ -231,8 +274,9 @@ function buildPanels() {
       smoothBtn: panel.querySelector('[data-smooth]'),
     };
     panel.querySelector('[data-smooth]').addEventListener('click', () => {
-      axis.smooth = !axis.smooth;
-      editors[key].smoothBtn.classList.toggle('on', axis.smooth);
+      const ly = act(axis);
+      ly.smooth = !ly.smooth;
+      editors[key].smoothBtn.classList.toggle('on', ly.smooth);
       commit(axis);
     });
     panel.querySelector('[data-addspan]').addEventListener('click', () => addSpan(axis));
@@ -261,14 +305,25 @@ function spanShortLabel(axis, s) {
   return '♪ ' + noteName(s.note) + ' ch' + s.ch;
 }
 
+const LAYER_COLORS = [
+  { trace: 'var(--trace)', dim: 'var(--trace-dim)', ptFill: 'var(--pt-fill)', ptStroke: 'var(--pt-stroke)', glow: '#6366f1' },
+  { trace: 'var(--l2-trace)', dim: 'var(--l2-trace-dim)', ptFill: 'var(--l2-pt-fill)', ptStroke: 'var(--l2-pt-stroke)', glow: '#d946ef' },
+];
+
 function render(axis) {
   const ed = editors[axis.key];
   const g = axisGeom(axis);
+  const li = state.activeLayer;
+  const ly = axis.layers[li];
+  const gi = 1 - li;
+  const gly = axis.layers[gi];
+  const C = LAYER_COLORS[li];
+  const GC = LAYER_COLORS[gi];
   const parts = [];
 
   parts.push(`<defs>
     <filter id="glow-${axis.key}" x="-40%" y="-40%" width="180%" height="180%">
-      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#6366f1" flood-opacity="0.75"/>
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="${C.glow}" flood-opacity="0.75"/>
     </filter>
     <filter id="glow-sim-${axis.key}" x="-60%" y="-60%" width="220%" height="220%">
       <feDropShadow dx="0" dy="0" stdDeviation="2.5" flood-color="hsl(16 100% 60%)" flood-opacity="0.8"/>
@@ -290,8 +345,38 @@ function render(axis) {
   parts.push(`<text x="${g.x0}" y="${g.h - 6}" font-size="9" letter-spacing="2">${axis.endLabels[0]}</text>`);
   parts.push(`<text x="${g.x1}" y="${g.h - 6}" font-size="9" letter-spacing="2" text-anchor="end">${axis.endLabels[1]}</text>`);
 
-  /* spans */
-  for (const s of sortedSpans(axis)) {
+  /* curve sampler for any layer */
+  const samplePath = (sl, lo, hi) => {
+    const n = Math.max(2, Math.round((hi - lo) * 140));
+    let dd = '';
+    for (let i = 0; i <= n; i++) {
+      const t = lo + (hi - lo) * (i / n);
+      dd += (i ? 'L' : 'M') + g.tx(t).toFixed(1) + ' ' + g.ty(curveValue(sl, t)).toFixed(1);
+    }
+    return dd;
+  };
+
+  /* ghost of the other layer — seen through frosted glass (only when on) */
+  if (state.layerOn[gi]) {
+    const gp = [];
+    for (const s of sortedSpans(gly)) {
+      const xa = g.tx(s.lo), xb = g.tx(s.hi);
+      gp.push(`<rect x="${xa}" y="${g.y0}" width="${xb - xa}" height="${g.y1 - g.y0}" fill="var(--span-fill)"/>`);
+      gp.push(`<line x1="${xa + 1.5}" y1="${g.y0 + 6}" x2="${xa + 1.5}" y2="${g.y1 - 6}" stroke="${GC.trace}" stroke-width="2" stroke-linecap="round"/>`);
+      gp.push(`<line x1="${xb - 1.5}" y1="${g.y0 + 6}" x2="${xb - 1.5}" y2="${g.y1 - 6}" stroke="${GC.trace}" stroke-width="2" stroke-linecap="round"/>`);
+    }
+    gp.push(`<path d="${samplePath(gly, 0, 1)}" fill="none" stroke="${GC.dim}" stroke-width="1.5" stroke-dasharray="3 4"/>`);
+    for (const r of gly.regions) {
+      gp.push(`<path d="${samplePath(gly, r.lo, r.hi)}" fill="none" stroke="${GC.trace}" stroke-width="2.5" stroke-linecap="round"/>`);
+    }
+    for (const p of sortedPoints(gly)) {
+      gp.push(`<circle cx="${g.tx(p.x)}" cy="${g.ty(p.y)}" r="4" fill="${GC.ptFill}" stroke="${GC.ptStroke}" stroke-width="1.5"/>`);
+    }
+    parts.push(`<g style="filter:blur(2.3px);opacity:.45" pointer-events="none">${gp.join('')}</g>`);
+  }
+
+  /* spans (active layer) */
+  for (const s of sortedSpans(ly)) {
     const xa = g.tx(s.lo), xb = g.tx(s.hi);
     parts.push(`<rect x="${xa}" y="${g.y0}" width="${xb - xa}" height="${g.y1 - g.y0}" fill="var(--span-fill)" data-role="span" data-id="${s.id}" style="cursor:grab"/>`);
     parts.push(`<line x1="${xa + 1.5}" y1="${g.y0 + 6}" x2="${xa + 1.5}" y2="${g.y1 - 6}" stroke="var(--span-edge)" stroke-width="3" stroke-linecap="round" pointer-events="none"/>`);
@@ -306,47 +391,38 @@ function render(axis) {
   }
 
   /* curve: dim base across full travel, bright overlay per live region */
-  const samplePath = (lo, hi) => {
-    const n = Math.max(2, Math.round((hi - lo) * 140));
-    let dd = '';
-    for (let i = 0; i <= n; i++) {
-      const t = lo + (hi - lo) * (i / n);
-      dd += (i ? 'L' : 'M') + g.tx(t).toFixed(1) + ' ' + g.ty(curveValue(axis, t)).toFixed(1);
-    }
-    return dd;
-  };
-  parts.push(`<path d="${samplePath(0, 1)}" fill="none" stroke="var(--trace-dim)" stroke-width="1.5" stroke-dasharray="3 4" pointer-events="none"/>`);
-  for (const r of axis.regions) {
-    parts.push(`<path d="${samplePath(r.lo, r.hi)}" fill="none" stroke="var(--trace)" stroke-width="2.5" stroke-linecap="round" filter="url(#glow-${axis.key})" pointer-events="none"/>`);
+  parts.push(`<path d="${samplePath(ly, 0, 1)}" fill="none" stroke="${C.dim}" stroke-width="1.5" stroke-dasharray="3 4" pointer-events="none"/>`);
+  for (const r of ly.regions) {
+    parts.push(`<path d="${samplePath(ly, r.lo, r.hi)}" fill="none" stroke="${C.trace}" stroke-width="2.5" stroke-linecap="round" filter="url(#glow-${axis.key})" pointer-events="none"/>`);
   }
 
   /* region chips */
-  axis.regions.forEach((r, i) => {
+  ly.regions.forEach((r, i) => {
     const cx = (g.tx(r.lo) + g.tx(r.hi)) / 2;
     const label = `CH${r.ch} · CC${r.cc}`;
     const wch = label.length * 6.4 + 16;
     parts.push(`<g data-role="region" data-idx="${i}" style="cursor:pointer">
-      <rect x="${cx - wch / 2}" y="6" width="${wch}" height="17" rx="8.5" fill="var(--chip-fill)" stroke="var(--chip-line)"/>
+      <rect x="${cx - wch / 2}" y="6" width="${wch}" height="17" rx="8.5" fill="var(--chip-fill)" stroke="${C.trace}" stroke-opacity="0.55"/>
       <text x="${cx}" y="18" font-size="8" text-anchor="middle" class="chip-label">${label}</text>
     </g>`);
   });
 
   /* points */
-  const pts = sortedPoints(axis);
+  const pts = sortedPoints(ly);
   pts.forEach(p => {
-    const inSpan = !!spanAt(axis, p.x);
+    const inSpan = !!spanAt(ly, p.x);
     const x = g.tx(p.x), y = g.ty(p.y);
-    const idx = axis.points.indexOf(p);
-    parts.push(`<circle cx="${x}" cy="${y}" r="6" fill="var(--pt-fill)" stroke="var(--pt-stroke)" stroke-width="2" opacity="${inSpan ? 0.35 : 1}" filter="url(#glow-${axis.key})" pointer-events="none"/>`);
+    const idx = ly.points.indexOf(p);
+    parts.push(`<circle cx="${x}" cy="${y}" r="6" fill="${C.ptFill}" stroke="${C.ptStroke}" stroke-width="2" opacity="${inSpan ? 0.35 : 1}" filter="url(#glow-${axis.key})" pointer-events="none"/>`);
     parts.push(`<circle cx="${x}" cy="${y}" r="17" fill="transparent" data-role="point" data-idx="${idx}" style="cursor:grab"/>`);
   });
 
   /* sim marker */
   const sx = g.tx(axis.sim);
   parts.push(`<line x1="${sx}" y1="${g.y0}" x2="${sx}" y2="${g.y1 + 8}" stroke="var(--sim)" stroke-width="1" opacity="0.65" pointer-events="none"/>`);
-  const live = !spanAt(axis, axis.sim);
+  const live = !spanAt(ly, axis.sim);
   if (live) {
-    const sy = g.ty(curveValue(axis, axis.sim));
+    const sy = g.ty(curveValue(ly, axis.sim));
     parts.push(`<circle cx="${sx}" cy="${sy}" r="3.5" fill="var(--sim)" filter="url(#glow-sim-${axis.key})" pointer-events="none"/>`);
   }
   parts.push(`<path d="M${sx - 7} ${g.y1 + 20} L${sx + 7} ${g.y1 + 20} L${sx} ${g.y1 + 9} Z" fill="var(--sim)" filter="url(#glow-sim-${axis.key})" data-role="sim" style="cursor:ew-resize"/>`);
@@ -357,19 +433,24 @@ function render(axis) {
   ed.svg.setAttribute('height', g.h);
   ed.svg.innerHTML = parts.join('');
 
-  /* output readout */
-  const s = spanAt(axis, axis.sim);
+  /* output readout (active layer) */
+  const tag = `L${li + 1}·`;
+  if (!state.layerOn[li]) {
+    ed.outEl.textContent = `L${li + 1} OFF`;
+    return;
+  }
+  const s = spanAt(ly, axis.sim);
   if (!s) {
-    const r = regionAt(axis, axis.sim);
-    const v = Math.round(curveValue(axis, axis.sim));
-    ed.outEl.textContent = r ? `CH${r.ch} CC${r.cc} → ${v}` : `→ ${v}`;
-  } else if (s.mode === 'dead') ed.outEl.textContent = 'DEAD';
-  else if (s.mode === 'freeze') ed.outEl.textContent = `FREEZE ${axis.freeze}`;
-  else ed.outEl.textContent = `NOTE ${noteName(s.note)} CH${s.ch}`;
+    const r = regionAt(ly, axis.sim);
+    const v = Math.round(curveValue(ly, axis.sim));
+    ed.outEl.textContent = tag + (r ? `CH${r.ch} CC${r.cc} → ${v}` : `→ ${v}`);
+  } else if (s.mode === 'dead') ed.outEl.textContent = tag + 'DEAD';
+  else if (s.mode === 'freeze') ed.outEl.textContent = tag + `FREEZE ${axis.freeze}`;
+  else ed.outEl.textContent = tag + `NOTE ${noteName(s.note)} CH${s.ch}`;
 }
 
 function commit(axis) {
-  syncRegions(axis);
+  for (const ly of axis.layers) syncRegions(ly);
   render(axis);
   saveState();
 }
@@ -398,7 +479,7 @@ function wireEditor(svg, axis) {
       pointerType: e.pointerType,
     };
     if (drag.role === 'span') {
-      const s = axis.spans.find(x => x.id === drag.id);
+      const s = act(axis).spans.find(x => x.id === drag.id);
       drag.spanLo = s.lo; drag.spanHi = s.hi;
     }
     svg.setPointerCapture(e.pointerId);
@@ -413,44 +494,45 @@ function wireEditor(svg, axis) {
     const g = axisGeom(axis);
     const t = g.it(px);
 
+    const ly = act(axis);
     if (drag.role === 'point') {
-      const p = axis.points[drag.idx];
+      const p = ly.points[drag.idx];
       if (p) { p.x = t; p.y = Math.round(g.iv(py)); commit(axis); }
     } else if (drag.role === 'edge') {
-      const s = axis.spans.find(x => x.id === drag.id);
+      const s = ly.spans.find(x => x.id === drag.id);
       if (s) {
-        const others = sortedSpans(axis).filter(x => x.id !== s.id);
-        const nb = neighborBounds(axis, s);
+        const others = sortedSpans(ly).filter(x => x.id !== s.id);
+        const nb = neighborBounds(ly, s);
         if (drag.side === 'lo') {
           let lo = Math.min(t, s.hi - MIN_SPAN);
           for (const o of others) if (o.hi <= s.hi && o.hi > lo) lo = o.hi;
           lo = Math.max(0, lo);
-          remapPoints(axis, [{ oldLo: nb.left, oldHi: s.lo, newLo: nb.left, newHi: lo }]);
+          remapPoints(ly, [{ oldLo: nb.left, oldHi: s.lo, newLo: nb.left, newHi: lo }]);
           s.lo = lo;
         } else {
           let hi = Math.max(t, s.lo + MIN_SPAN);
           for (const o of others) if (o.lo >= s.lo && o.lo < hi) hi = o.lo;
           hi = Math.min(1, hi);
-          remapPoints(axis, [{ oldLo: s.hi, oldHi: nb.right, newLo: hi, newHi: nb.right }]);
+          remapPoints(ly, [{ oldLo: s.hi, oldHi: nb.right, newLo: hi, newHi: nb.right }]);
           s.hi = hi;
         }
         commit(axis);
       }
     } else if (drag.role === 'span') {
-      const s = axis.spans.find(x => x.id === drag.id);
+      const s = ly.spans.find(x => x.id === drag.id);
       if (s) {
         const wSpan = drag.spanHi - drag.spanLo;
         let lo = drag.spanLo + (t - g.it(drag.startPx));
         let hi = lo + wSpan;
-        for (const o of sortedSpans(axis)) {
+        for (const o of sortedSpans(ly)) {
           if (o.id === s.id) continue;
           if (o.hi <= drag.spanLo + 1e-9 && lo < o.hi) { lo = o.hi; hi = lo + wSpan; }
           if (o.lo >= drag.spanHi - 1e-9 && hi > o.lo) { hi = o.lo; lo = hi - wSpan; }
         }
         if (lo < 0) { lo = 0; hi = wSpan; }
         if (hi > 1) { hi = 1; lo = 1 - wSpan; }
-        const nb = neighborBounds(axis, s);
-        remapPoints(axis, [
+        const nb = neighborBounds(ly, s);
+        remapPoints(ly, [
           { oldLo: nb.left, oldHi: s.lo, newLo: nb.left, newHi: lo },
           { oldLo: s.hi, oldHi: nb.right, newLo: hi, newHi: nb.right },
         ]);
@@ -473,7 +555,7 @@ function wireEditor(svg, axis) {
     const { px, py } = evPos(e);
     if (d.role === 'point') { openPointPopover(axis, d.idx, e.clientX, e.clientY); return; }
     if (d.role === 'span' || d.role === 'edge') {
-      const s = axis.spans.find(x => x.id === d.id);
+      const s = act(axis).spans.find(x => x.id === d.id);
       if (s) openSpanPopover(axis, s, e.clientX, e.clientY);
       return;
     }
@@ -504,21 +586,22 @@ function addPointAt(axis, px, py) {
   const g = axisGeom(axis);
   if (py < g.y0 - 6 || py > g.y1 + 6) return;
   const t = g.it(px);
-  axis.points.push({ x: t, y: Math.round(g.iv(py)) });
+  act(axis).points.push({ x: t, y: Math.round(g.iv(py)) });
   commit(axis);
 }
 
 function addSpan(axis) {
   /* drop the new span in the middle of the widest live gap */
-  syncRegions(axis);
+  const ly = act(axis);
+  syncRegions(ly);
   let best = null;
-  for (const r of axis.regions) {
+  for (const r of ly.regions) {
     if (!best || (r.hi - r.lo) > (best.hi - best.lo)) best = r;
   }
   if (!best || best.hi - best.lo < MIN_SPAN * 3) return;
   const wSpan = Math.min(0.1, (best.hi - best.lo) * 0.34);
   const mid = (best.lo + best.hi) / 2;
-  axis.spans.push({ id: uid(), lo: mid - wSpan / 2, hi: mid + wSpan / 2, mode: 'dead', ch: 1, note: 60 });
+  ly.spans.push({ id: uid(), lo: mid - wSpan / 2, hi: mid + wSpan / 2, mode: 'dead', ch: ly.defCh || 1, note: 60 });
   commit(axis);
 }
 
@@ -561,9 +644,10 @@ function numRow(label, id, val, min, max) {
 }
 
 function openPointPopover(axis, idx, cx, cy) {
-  const p = axis.points[idx];
+  const ly = act(axis);
+  const p = ly.points[idx];
   if (!p) return;
-  const region = regionAt(axis, p.x);
+  const region = regionAt(ly, p.x);
   openPopover(`
     <h3><span class="amb-led"></span>Point</h3>
     <div class="pop-rows">
@@ -585,7 +669,7 @@ function openPointPopover(axis, idx, cx, cy) {
   wire('pch', v => { if (region && !isNaN(v)) region.ch = clampi(v, 1, 16); });
   wire('pcc', v => { if (region && !isNaN(v)) region.cc = clampi(v, 0, 127); });
   pop.querySelector('#pdel').addEventListener('click', () => {
-    axis.points.splice(idx, 1);
+    ly.points.splice(idx, 1);
     closePopover();
     commit(axis);
   });
@@ -630,14 +714,15 @@ function openSpanPopover(axis, s, cx, cy) {
     commit(axis);
   });
   pop.querySelector('#sdel').addEventListener('click', () => {
-    axis.spans = axis.spans.filter(x => x.id !== s.id);
+    const ly = act(axis);
+    ly.spans = ly.spans.filter(x => x.id !== s.id);
     closePopover();
     commit(axis);
   });
 }
 
 function openRegionPopover(axis, idx, cx, cy) {
-  const r = axis.regions[idx];
+  const r = act(axis).regions[idx];
   if (!r) return;
   openPopover(`
     <h3><span class="amb-led"></span>Live zone &nbsp;<span class="pop-note">${pct(r.lo)} – ${pct(r.hi)}</span></h3>
@@ -678,8 +763,9 @@ function saveProgram(asNew) {
   if (entry) {
     entry.name = name;
     entry.axes = snapshotAxes();
+    entry.layerOn = [...state.layerOn];
   } else {
-    entry = { id: uid(), name, axes: snapshotAxes() };
+    entry = { id: uid(), name, axes: snapshotAxes(), layerOn: [...state.layerOn] };
     state.library.push(entry);
     state.loadedId = entry.id;
   }
@@ -690,10 +776,12 @@ function saveProgram(asNew) {
 function loadProgram(id) {
   const entry = libEntry(id);
   if (!entry) return;
-  state.axes = JSON.parse(JSON.stringify(entry.axes));
+  state.axes = migrateAxes(JSON.parse(JSON.stringify(entry.axes)));
+  state.layerOn = entry.layerOn ? [...entry.layerOn] : [true, false];
   state.program.name = entry.name;
   state.loadedId = id;
   progName.value = entry.name;
+  updateLayerTabs();
   buildPanels();
   for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
   renderLibrarian();
@@ -913,6 +1001,34 @@ document.getElementById('miSend').addEventListener('click', () => {
   miLog.classList.toggle('ok', res.ok);
 });
 
+/* ── layers: tab switching + on/off toggles ──────────────────────── */
+
+const layerTabs = [...document.querySelectorAll('.layer-tab')];
+
+function updateLayerTabs() {
+  layerTabs.forEach((t, i) => {
+    t.classList.toggle('on', state.activeLayer === i);
+    t.classList.toggle('off', !state.layerOn[i]);
+  });
+}
+
+layerTabs.forEach((t, i) => {
+  t.addEventListener('click', e => {
+    if (e.target.closest('.lt-pwr')) {
+      state.layerOn[i] = !state.layerOn[i];
+    } else {
+      state.activeLayer = i;
+    }
+    saveState();
+    updateLayerTabs();
+    for (const key of ['yaw', 'pitch']) {
+      const axis = state.axes[key];
+      editors[key].smoothBtn.classList.toggle('on', act(axis).smooth);
+      render(axis);
+    }
+  });
+});
+
 /* ── publish ─────────────────────────────────────────────────────── */
 
 function exportText() {
@@ -926,30 +1042,33 @@ function exportText() {
   lines.push('');
   for (const key of ['yaw', 'pitch']) {
     const a = state.axes[key];
-    lines.push(`${a.label}  (${a.endLabels[0]} → ${a.endLabels[1]})   curve: ${a.smooth ? 'smooth' : 'linear'}`);
+    lines.push(`${a.label}  (${a.endLabels[0]} → ${a.endLabels[1]})`);
     lines.push(rule);
-    /* interleave spans and regions in travel order */
-    const segs = [
-      ...sortedSpans(a).map(s => ({ lo: s.lo, hi: s.hi, span: s })),
-      ...a.regions.map(r => ({ lo: r.lo, hi: r.hi, region: r })),
-    ].sort((x, y) => x.lo - y.lo);
-    for (const seg of segs) {
-      const range = `${pct(seg.lo).padStart(6)} – ${pct(seg.hi).padStart(6)}`;
-      if (seg.span) {
-        const s = seg.span;
-        let detail = 'dead';
-        if (s.mode === 'freeze') detail = `freeze ${a.freeze} value`;
-        if (s.mode === 'note') detail = `note on · CH ${s.ch} · #${s.note} (${noteName(s.note)})`;
-        lines.push(`  [${range}]  SPAN   ${detail}`);
-      } else {
-        const r = seg.region;
-        lines.push(`  (${range})  LIVE   CH ${r.ch} · CC ${r.cc}`);
-        const pts = sortedPoints(a).filter(pt => pt.x >= seg.lo - 1e-6 && pt.x <= seg.hi + 1e-6);
-        if (pts.length) {
-          lines.push(`${' '.repeat(21)}curve  ${pts.map(pt => `${pct(pt.x)}→${Math.round(pt.y)}`).join(',  ')}`);
+    a.layers.forEach((ly, i) => {
+      lines.push(`  LAYER ${i + 1} · ${state.layerOn[i] ? 'ON' : 'OFF'} · curve: ${ly.smooth ? 'smooth' : 'linear'}`);
+      /* interleave spans and regions in travel order */
+      const segs = [
+        ...sortedSpans(ly).map(s => ({ lo: s.lo, hi: s.hi, span: s })),
+        ...ly.regions.map(r => ({ lo: r.lo, hi: r.hi, region: r })),
+      ].sort((x, y) => x.lo - y.lo);
+      for (const seg of segs) {
+        const range = `${pct(seg.lo).padStart(6)} – ${pct(seg.hi).padStart(6)}`;
+        if (seg.span) {
+          const s = seg.span;
+          let detail = 'dead';
+          if (s.mode === 'freeze') detail = `freeze ${a.freeze} value`;
+          if (s.mode === 'note') detail = `note on · CH ${s.ch} · #${s.note} (${noteName(s.note)})`;
+          lines.push(`    [${range}]  SPAN   ${detail}`);
+        } else {
+          const r = seg.region;
+          lines.push(`    (${range})  LIVE   CH ${r.ch} · CC ${r.cc}`);
+          const pts = sortedPoints(ly).filter(pt => pt.x >= seg.lo - 1e-6 && pt.x <= seg.hi + 1e-6);
+          if (pts.length) {
+            lines.push(`${' '.repeat(23)}curve  ${pts.map(pt => `${pct(pt.x)}→${Math.round(pt.y)}`).join(',  ')}`);
+          }
         }
       }
-    }
+    });
     lines.push('');
   }
   if (state.setlist.length) {
@@ -978,14 +1097,18 @@ function exportJSON() {
   for (const key of ['yaw', 'pitch']) {
     const a = state.axes[key];
     out.axes[key] = {
-      curveMode: a.smooth ? 'smooth' : 'linear',
-      points: sortedPoints(a).map(p => ({ travel: +(p.x.toFixed(4)), value: Math.round(p.y) })),
-      spans: sortedSpans(a).map(s => ({
-        lo: +(s.lo.toFixed(4)), hi: +(s.hi.toFixed(4)), mode: s.mode,
-        ...(s.mode === 'note' ? { channel: s.ch, note: s.note } : {}),
-      })),
-      liveZones: a.regions.map(r => ({
-        lo: +(r.lo.toFixed(4)), hi: +(r.hi.toFixed(4)), channel: r.ch, cc: r.cc,
+      layers: a.layers.map((ly, i) => ({
+        layer: i + 1,
+        enabled: !!state.layerOn[i],
+        curveMode: ly.smooth ? 'smooth' : 'linear',
+        points: sortedPoints(ly).map(p => ({ travel: +(p.x.toFixed(4)), value: Math.round(p.y) })),
+        spans: sortedSpans(ly).map(s => ({
+          lo: +(s.lo.toFixed(4)), hi: +(s.hi.toFixed(4)), mode: s.mode,
+          ...(s.mode === 'note' ? { channel: s.ch, note: s.note } : {}),
+        })),
+        liveZones: ly.regions.map(r => ({
+          lo: +(r.lo.toFixed(4)), hi: +(r.hi.toFixed(4)), channel: r.ch, cc: r.cc,
+        })),
       })),
     };
   }
@@ -1041,6 +1164,7 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   if (!confirm('Reset the demo? This also clears the library and setlist.')) return;
   state = defaultState();
   progName.value = state.program.name;
+  updateLayerTabs();
   buildPanels();
   for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
   renderLibrarian();
@@ -1048,6 +1172,7 @@ document.getElementById('resetBtn').addEventListener('click', () => {
 
 document.getElementById('appVersion').textContent = 'v' + APP_VERSION;
 
+updateLayerTabs();
 buildPanels();
 for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
 renderLibrarian();

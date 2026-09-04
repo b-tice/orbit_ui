@@ -28,6 +28,12 @@
   --chip-line: hsl(238 70% 68% / .5);
   --sim: hsl(16 100% 72%);      /* the night lume — warm coral */
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* layer 2 — magenta */
+  --l2-trace: #e879f9;
+  --l2-trace-dim: #5e2f63;
+  --l2-pt-fill: #fae8ff;
+  --l2-pt-stroke: #d946ef;
 }
 
 html { -webkit-text-size-adjust: 100%; }
@@ -90,6 +96,35 @@ body {
 }
 .ghostbtn:hover { color: var(--ink); border-color: var(--span-edge); }
 .ghostbtn.on { color: var(--sim); border-color: var(--sim); }
+
+/* ── layer tabs ──────────────────────────────────────────────────── */
+.layer-tabs {
+  display: flex; gap: 8px;
+  padding: 6px 22px 0; max-width: 1180px; margin: 0 auto; box-sizing: border-box;
+}
+.layer-tab {
+  display: flex; align-items: center; gap: 9px;
+  font-family: inherit; font-size: 9px; letter-spacing: .14em;
+  color: var(--ink-dim); cursor: pointer;
+  background: var(--well); border: 1px solid var(--well-line);
+  border-radius: 10px 10px 0 0; border-bottom: none;
+  padding: 8px 14px 10px;
+}
+.lt-0 { --lt-accent: var(--trace); }
+.lt-1 { --lt-accent: var(--l2-trace); }
+.layer-tab .lt-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--lt-accent); box-shadow: 0 0 6px var(--lt-accent);
+}
+.layer-tab.on {
+  color: var(--ink);
+  border-color: var(--lt-accent);
+  background: color-mix(in oklab, var(--lt-accent) 13%, var(--well));
+}
+.layer-tab .lt-pwr { font-size: 11px; color: var(--lt-accent); padding: 0 2px; }
+.layer-tab.off .lt-dot { background: hsl(250 15% 25%); box-shadow: none; }
+.layer-tab.off .lt-pwr { color: var(--ink-dim); }
+.layer-tab.off { color: var(--ink-dim); font-style: italic; }
 
 /* ── axis panels ─────────────────────────────────────────────────── */
 main { display: grid; gap: 20px; padding: 10px 22px 6px; max-width: 1180px; margin: 0 auto; box-sizing: border-box; }

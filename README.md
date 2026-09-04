@@ -41,6 +41,17 @@ own MIDI channel + CC number (shown as the `CH·CC` chip above the strip).
 Inverting output is just a curve whose points descend — no separate
 polarity switch, per the response-curves-cover-polarity discussion.
 
+## Layers (v1.5)
+
+Each axis carries **two layers** — two full sets of points, spans, and
+live-zone assignments driven by the same pedal movement (e.g. different
+MIDI channels/CCs per layer). Tabs above the editors switch which layer
+is being edited: **Layer 1** is indigo, **Layer 2** is magenta. The
+inactive layer stays visible underneath, blurred like frosted glass, so
+you can line up curves without visual clutter. Each tab's ⏻ toggles that
+layer on/off (an off layer's ghost is hidden and it's marked OFF in the
+exports). Layer on/off state is saved per program in the library.
+
 ## Interactions
 
 | Gesture | Effect |
