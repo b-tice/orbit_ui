@@ -20,6 +20,10 @@
     <span class="tagline">assignment editor — concept demo</span>
   </div>
   <div class="programbar">
+    <label class="field" title="channel Orbit listens on for incoming MIDI (program changes) — separate from the send channels in the editor">
+      <span>GLOBAL&nbsp;CH</span>
+      <select id="globalCh"></select>
+    </label>
     <label class="field">
       <span>PGM</span>
       <input id="progNum" type="text" value="&mdash;" readonly tabindex="-1" title="program change number — the loaded program's setlist position">
@@ -55,6 +59,13 @@
         <span class="lib-note">position = program change #</span>
       </div>
       <ul class="lib-list" id="setList"></ul>
+      <div class="midi-in">
+        <span class="mi-title">MIDI IN · TEST</span>
+        <label class="field"><span>CH</span><select id="miCh"></select></label>
+        <label class="field"><span>PC</span><input id="miPc" type="number" min="1" max="128" value="1" inputmode="numeric"></label>
+        <button class="ghostbtn" id="miSend" type="button">send</button>
+        <span id="miLog"></span>
+      </div>
     </div>
   </section>
 </div>

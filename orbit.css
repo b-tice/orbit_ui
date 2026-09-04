@@ -65,6 +65,12 @@ body {
   border-radius: 7px; padding: 6px 8px; outline: none;
 }
 .field input:focus { border-color: var(--pt-stroke); box-shadow: 0 0 6px hsl(243 70% 60% / .5); }
+.field select {
+  font-family: var(--mono); font-size: 13px; color: var(--ink);
+  background: var(--well); border: 1px solid var(--well-line);
+  border-radius: 7px; padding: 6px 8px; outline: none;
+}
+.field select:focus { border-color: var(--pt-stroke); }
 #progNum { width: 52px; }
 #progNum[readonly] {
   color: var(--sim); text-align: center; cursor: default;
@@ -238,6 +244,23 @@ svg .span-label { fill: var(--span-edge); letter-spacing: .08em; }
 }
 .set-row.dragging { display: none; }
 .lib-list.drop-remove { border-color: hsl(0 40% 42%); box-shadow: inset 0 0 12px hsl(0 50% 25% / .4); }
+
+.midi-in {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin-top: 10px; padding: 8px 10px;
+  border: 1px dashed var(--well-line); border-radius: 10px;
+}
+.mi-title { font-size: 8px; letter-spacing: .16em; color: var(--ink-dim); }
+.midi-in .field input, .midi-in .field select { padding: 4px 6px; font-size: 12px; }
+#miPc { width: 48px; }
+#miLog { font-family: var(--mono); font-size: 10px; color: var(--ink-dim); flex-basis: 100%; }
+#miLog.ok { color: var(--sim); text-shadow: 0 0 8px hsl(16 100% 60% / .45); }
+
+@keyframes rxflash {
+  0% { border-color: var(--sim); box-shadow: 0 0 12px hsl(16 100% 60% / .6); }
+  100% { border-color: var(--chip-line); box-shadow: none; }
+}
+.set-row.rx { animation: rxflash .9s ease-out; }
 .set-drop {
   height: 3px; border-radius: 2px; margin: 0 4px; list-style: none;
   background: var(--sim); box-shadow: 0 0 8px var(--sim);

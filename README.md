@@ -57,6 +57,8 @@ polarity switch, per the response-curves-cover-polarity discussion.
 | drag the ▲ marker | simulate pedal position; readout shows the CC (or span behavior) that would be sent |
 | **Publish** | modal with the full settings as readable text or JSON, with a copy button |
 | **Save** / **+ new** | store the current program in the Library (Save updates the loaded one, + new makes a copy) (v1.2) |
+| **GLOBAL CH** | the channel Orbit *receives* on (1–16 or OMNI) — separate from the send channels (v1.4) |
+| **MIDI IN · TEST** | simulate an incoming program change: on the global channel it loads that setlist slot (with a flash); otherwise it's ignored (v1.4) |
 | Library row | tap to load · `+` appends to the Setlist · `×` twice deletes · drag the bar (anywhere, v1.3) into the Setlist at any position |
 | Setlist row | drag the bar to reorder — position is the 1:1 program change number · drag it onto the Library to remove (v1.3) · `×` removes · tap loads |
 

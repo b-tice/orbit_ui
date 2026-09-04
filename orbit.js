@@ -7,7 +7,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.3';
+const APP_VERSION = '1.4';
 
 /* ── state ───────────────────────────────────────────────────────── */
 
@@ -49,6 +49,7 @@ function defaultState() {
     library: [],
     setlist: [],
     loadedId: null,
+    globalCh: 16, /* receive channel for incoming MIDI (or 'omni') */
   };
 }
 
@@ -63,6 +64,7 @@ function loadState() {
         s.library = s.library || [];
         s.setlist = s.setlist || [];
         if (s.loadedId === undefined) s.loadedId = null;
+        if (s.globalCh === undefined) s.globalCh = 16;
         return s;
       }
     }
@@ -870,6 +872,47 @@ wireRowDrag(setListEl, 'set');
 document.getElementById('saveBtn').addEventListener('click', () => saveProgram(false));
 document.getElementById('saveNewBtn').addEventListener('click', () => saveProgram(true));
 
+/* ── MIDI receive: global channel + program change → setlist slot ── */
+
+const globalChSel = document.getElementById('globalCh');
+globalChSel.innerHTML = '<option value="omni">OMNI</option>'
+  + Array.from({ length: 16 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('');
+globalChSel.value = String(state.globalCh);
+globalChSel.addEventListener('change', () => {
+  state.globalCh = globalChSel.value === 'omni' ? 'omni' : +globalChSel.value;
+  saveState();
+});
+
+/* the device rule: a PC on the global channel selects that setlist slot */
+function receiveProgramChange(ch, pc) {
+  const gch = state.globalCh;
+  if (gch !== 'omni' && ch !== gch) {
+    return { ok: false, msg: `PC ${pc} ch${ch} — ignored (global ch ${gch})` };
+  }
+  const id = state.setlist[pc - 1];
+  if (!id || !libEntry(id)) {
+    return { ok: false, msg: `PC ${pc} ch${ch} — no setlist slot ${pc}` };
+  }
+  loadProgram(id);
+  const row = setListEl.querySelector(`.set-row[data-idx="${pc - 1}"]`);
+  if (row) {
+    row.classList.add('rx');
+    row.addEventListener('animationend', () => row.classList.remove('rx'), { once: true });
+  }
+  return { ok: true, msg: `PC ${pc} ch${ch} → loaded ${pc}·"${libEntry(id).name}"` };
+}
+
+const miCh = document.getElementById('miCh');
+miCh.innerHTML = Array.from({ length: 16 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('');
+miCh.value = '16';
+const miLog = document.getElementById('miLog');
+document.getElementById('miSend').addEventListener('click', () => {
+  const pc = clampi(parseFloat(document.getElementById('miPc').value), 1, 128);
+  const res = receiveProgramChange(+miCh.value, pc);
+  miLog.textContent = res.msg;
+  miLog.classList.toggle('ok', res.ok);
+});
+
 /* ── publish ─────────────────────────────────────────────────────── */
 
 function exportText() {
@@ -879,6 +922,7 @@ function exportText() {
   const pc = loadedPC();
   lines.push(`ORBIT PROGRAM ${pc ? String(pc).padStart(3, '0') : '---'} · "${p.name}"`);
   lines.push(`orbit ui v${APP_VERSION} · exported ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`);
+  lines.push(`global channel: ${state.globalCh === 'omni' ? 'OMNI' : 'CH ' + state.globalCh}  (receives program changes → setlist)`);
   lines.push('');
   for (const key of ['yaw', 'pitch']) {
     const a = state.axes[key];
@@ -923,6 +967,7 @@ function exportText() {
 function exportJSON() {
   const out = {
     version: APP_VERSION,
+    globalChannel: state.globalCh,
     program: { num: loadedPC(), name: state.program.name },
     setlist: state.setlist.map((id, i) => {
       const en = libEntry(id);
