@@ -7,7 +7,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.1';
+const APP_VERSION = '1.2';
 
 /* ── state ───────────────────────────────────────────────────────── */
 
@@ -46,6 +46,9 @@ function defaultState() {
         regions: [], baseCC: 1,
       },
     },
+    library: [],
+    setlist: [],
+    loadedId: null,
   };
 }
 
@@ -56,7 +59,12 @@ function loadState() {
     const raw = localStorage.getItem(STORE_KEY);
     if (raw) {
       const s = JSON.parse(raw);
-      if (s && s.axes && s.axes.yaw && s.axes.pitch) return s;
+      if (s && s.axes && s.axes.yaw && s.axes.pitch) {
+        s.library = s.library || [];
+        s.setlist = s.setlist || [];
+        if (s.loadedId === undefined) s.loadedId = null;
+        return s;
+      }
     }
   } catch (e) { /* fall through to defaults */ }
   return defaultState();
@@ -647,13 +655,201 @@ function clampi(v, lo, hi) {
   return Math.max(lo, Math.min(hi, Math.round(v)));
 }
 
+/* ── librarian: program library + drag-ordered setlist ───────────── */
+
+const libListEl = document.getElementById('libList');
+const setListEl = document.getElementById('setList');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function libEntry(id) { return state.library.find(x => x.id === id) || null; }
+
+/* the loaded program's 1-based setlist position (its PC number), or null */
+function loadedPC() {
+  const i = state.setlist.indexOf(state.loadedId);
+  return i >= 0 ? i + 1 : null;
+}
+const snapshotAxes = () => JSON.parse(JSON.stringify(state.axes));
+
+function saveProgram(asNew) {
+  const name = (state.program.name || 'UNTITLED').toUpperCase().slice(0, 10);
+  let entry = !asNew && state.loadedId ? libEntry(state.loadedId) : null;
+  if (entry) {
+    entry.name = name;
+    entry.axes = snapshotAxes();
+  } else {
+    entry = { id: uid(), name, axes: snapshotAxes() };
+    state.library.push(entry);
+    state.loadedId = entry.id;
+  }
+  saveState();
+  renderLibrarian();
+}
+
+function loadProgram(id) {
+  const entry = libEntry(id);
+  if (!entry) return;
+  state.axes = JSON.parse(JSON.stringify(entry.axes));
+  state.program.name = entry.name;
+  state.loadedId = id;
+  progName.value = entry.name;
+  buildPanels();
+  for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
+  renderLibrarian();
+}
+
+function renderLibrarian() {
+  libListEl.innerHTML = state.library.length
+    ? state.library.map(en => `
+      <li class="lib-row${en.id === state.loadedId ? ' on' : ''}" data-id="${en.id}">
+        <span class="grip" title="drag into setlist">⠿</span>
+        <span class="lib-name">${esc(en.name)}</span>
+        <button class="rowbtn" data-add type="button" title="append to setlist">+</button>
+        <button class="rowbtn" data-del type="button" title="delete (tap twice)">×</button>
+      </li>`).join('')
+    : '<li class="lib-empty">empty — SAVE stores the current program</li>';
+  setListEl.innerHTML = state.setlist.length
+    ? state.setlist.map((id, i) => {
+      const en = libEntry(id);
+      return `
+      <li class="set-row${id === state.loadedId ? ' on' : ''}" data-idx="${i}">
+        <span class="pc">${i + 1}</span>
+        <span class="lib-name">${en ? esc(en.name) : '?'}</span>
+        <span class="grip" title="drag to reorder">⠿</span>
+        <button class="rowbtn" data-del type="button" title="remove">×</button>
+      </li>`;
+    }).join('')
+    : '<li class="lib-empty">drag programs here — order sets the PC #</li>';
+  progNum.value = loadedPC() ?? '—';
+}
+
+/* two-tap delete: first tap arms the button, second within 2.5s fires */
+function armDelete(target, fn) {
+  const btn = target.closest('button');
+  if (btn.dataset.armed) { fn(); return; }
+  btn.dataset.armed = '1';
+  btn.textContent = '✓';
+  setTimeout(() => {
+    if (btn.isConnected) { delete btn.dataset.armed; btn.textContent = '×'; }
+  }, 2500);
+}
+
+libListEl.addEventListener('click', e => {
+  const row = e.target.closest('.lib-row');
+  if (!row) return;
+  const id = row.dataset.id;
+  if (e.target.closest('[data-del]')) {
+    armDelete(e.target, () => {
+      state.library = state.library.filter(x => x.id !== id);
+      state.setlist = state.setlist.filter(x => x !== id);
+      if (state.loadedId === id) state.loadedId = null;
+      saveState();
+      renderLibrarian();
+    });
+    return;
+  }
+  if (e.target.closest('[data-add]')) {
+    state.setlist.push(id);
+    saveState();
+    renderLibrarian();
+    return;
+  }
+  if (e.target.closest('.grip')) return;
+  loadProgram(id);
+});
+
+setListEl.addEventListener('click', e => {
+  const row = e.target.closest('.set-row');
+  if (!row) return;
+  const idx = +row.dataset.idx;
+  if (e.target.closest('[data-del]')) {
+    state.setlist.splice(idx, 1);
+    saveState();
+    renderLibrarian();
+    return;
+  }
+  if (e.target.closest('.grip')) return;
+  loadProgram(state.setlist[idx]);
+});
+
+/* pointer-based row drag: library → setlist insert, setlist reorder */
+function wireRowDrag(listEl, kind) {
+  listEl.addEventListener('pointerdown', e => {
+    const grip = e.target.closest('.grip');
+    const row = grip && grip.closest('li');
+    if (!row) return;
+    e.preventDefault();
+
+    const r = row.getBoundingClientRect();
+    const ghost = row.cloneNode(true);
+    ghost.classList.add('drag-ghost');
+    ghost.style.width = r.width + 'px';
+    document.body.appendChild(ghost);
+    const ph = document.createElement('li');
+    ph.className = 'set-drop';
+    const d = {
+      kind, ghost, ph, active: false, dropIdx: 0,
+      id: row.dataset.id,
+      oldIdx: row.dataset.idx != null ? +row.dataset.idx : -1,
+    };
+    if (kind === 'set') row.classList.add('dragging');
+
+    const place = ev => {
+      ghost.style.transform = `translate(${ev.clientX + 10}px, ${ev.clientY - r.height / 2}px)`;
+      const rect = setListEl.getBoundingClientRect();
+      const inside = ev.clientX > rect.left - 24 && ev.clientX < rect.right + 24
+                  && ev.clientY > rect.top - 12 && ev.clientY < rect.bottom + 24;
+      if (!inside) {
+        d.active = false;
+        if (ph.parentNode) ph.remove();
+        return;
+      }
+      const rows = [...setListEl.querySelectorAll('.set-row:not(.dragging)')];
+      let idx = rows.length;
+      for (let i = 0; i < rows.length; i++) {
+        const m = rows[i].getBoundingClientRect();
+        if (ev.clientY < m.top + m.height / 2) { idx = i; break; }
+      }
+      d.active = true;
+      d.dropIdx = idx;
+      if (idx < rows.length) setListEl.insertBefore(ph, rows[idx]);
+      else setListEl.appendChild(ph);
+    };
+    place(e);
+
+    const up = () => {
+      document.removeEventListener('pointermove', place);
+      document.removeEventListener('pointerup', up);
+      ghost.remove();
+      if (ph.parentNode) ph.remove();
+      if (d.active) {
+        if (kind === 'lib') {
+          state.setlist.splice(d.dropIdx, 0, d.id);
+        } else {
+          const [moved] = state.setlist.splice(d.oldIdx, 1);
+          state.setlist.splice(d.dropIdx, 0, moved);
+        }
+        saveState();
+      }
+      renderLibrarian(); /* also clears .dragging */
+    };
+    document.addEventListener('pointermove', place);
+    document.addEventListener('pointerup', up);
+  });
+}
+wireRowDrag(libListEl, 'lib');
+wireRowDrag(setListEl, 'set');
+
+document.getElementById('saveBtn').addEventListener('click', () => saveProgram(false));
+document.getElementById('saveNewBtn').addEventListener('click', () => saveProgram(true));
+
 /* ── publish ─────────────────────────────────────────────────────── */
 
 function exportText() {
   const p = state.program;
   const lines = [];
   const rule = '─'.repeat(52);
-  lines.push(`ORBIT PROGRAM ${String(p.num).padStart(3, '0')} · "${p.name}"`);
+  const pc = loadedPC();
+  lines.push(`ORBIT PROGRAM ${pc ? String(pc).padStart(3, '0') : '---'} · "${p.name}"`);
   lines.push(`orbit ui v${APP_VERSION} · exported ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`);
   lines.push('');
   for (const key of ['yaw', 'pitch']) {
@@ -684,13 +880,26 @@ function exportText() {
     }
     lines.push('');
   }
+  if (state.setlist.length) {
+    lines.push('SETLIST  (1:1 program change map)');
+    lines.push(rule);
+    state.setlist.forEach((id, i) => {
+      const en = libEntry(id);
+      lines.push(`  PC ${String(i + 1).padStart(3)}  →  "${en ? en.name : '?'}"`);
+    });
+    lines.push('');
+  }
   return lines.join('\n');
 }
 
 function exportJSON() {
   const out = {
     version: APP_VERSION,
-    program: { ...state.program },
+    program: { num: loadedPC(), name: state.program.name },
+    setlist: state.setlist.map((id, i) => {
+      const en = libEntry(id);
+      return { pc: i + 1, name: en ? en.name : '?' };
+    }),
     axes: {},
   };
   for (const key of ['yaw', 'pitch']) {
@@ -752,24 +961,23 @@ document.getElementById('copyBtn').addEventListener('click', async () => {
 
 const progNum = document.getElementById('progNum');
 const progName = document.getElementById('progName');
-progNum.value = state.program.num;
 progName.value = state.program.name;
-progNum.addEventListener('input', () => { state.program.num = clampi(parseFloat(progNum.value), 1, 128); saveState(); });
 progName.addEventListener('input', () => { state.program.name = progName.value.toUpperCase().slice(0, 10); saveState(); });
 
 document.getElementById('resetBtn').addEventListener('click', () => {
-  if (!confirm('Reset the demo to its default layout?')) return;
+  if (!confirm('Reset the demo? This also clears the library and setlist.')) return;
   state = defaultState();
-  progNum.value = state.program.num;
   progName.value = state.program.name;
   buildPanels();
   for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
+  renderLibrarian();
 });
 
 document.getElementById('appVersion').textContent = 'v' + APP_VERSION;
 
 buildPanels();
 for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
+renderLibrarian();
 
 let resizeTimer = null;
 window.addEventListener('resize', () => {

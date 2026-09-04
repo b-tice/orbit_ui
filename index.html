@@ -22,12 +22,15 @@
   <div class="programbar">
     <label class="field">
       <span>PGM</span>
-      <input id="progNum" type="number" min="1" max="128" value="1" inputmode="numeric">
+      <input id="progNum" type="text" value="&mdash;" readonly tabindex="-1" title="program change number — the loaded program's setlist position">
     </label>
     <label class="field">
       <span>NAME</span>
       <input id="progName" type="text" maxlength="10" value="INIT" autocapitalize="characters" spellcheck="false">
     </label>
+    <button class="amb-button ambx-press-sm" id="saveBtn" type="button" title="save to library">
+      <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Save</span>
+    </button>
     <button class="amb-button ambx-press-sm" id="publishBtn" type="button">
       <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Publish</span>
     </button>
@@ -35,6 +38,26 @@
 </header>
 
 <main id="axes"></main>
+
+<div class="lib-outer">
+  <section class="librarian ambient amb-surface amb-chamfer amb-elevation-2 ambx-panel amb-mat-blasted amb-rounded-xl">
+    <div class="lib-col">
+      <div class="lib-head">
+        <h2>LIBRARY</h2>
+        <span class="lib-note">tap to load · drag ⠿ into setlist</span>
+        <button class="ghostbtn" id="saveNewBtn" type="button" title="save current as a new program">+ new</button>
+      </div>
+      <ul class="lib-list" id="libList"></ul>
+    </div>
+    <div class="lib-col">
+      <div class="lib-head">
+        <h2>SETLIST</h2>
+        <span class="lib-note">position = program change #</span>
+      </div>
+      <ul class="lib-list" id="setList"></ul>
+    </div>
+  </section>
+</div>
 
 <footer class="hints">
   <p>
