@@ -51,6 +51,11 @@ body {
 .brand h1 { margin: 0; font-size: 21px; letter-spacing: .12em; font-weight: 400; }
 .brand h1 span { color: var(--trace); }
 .tagline { font-size: 9px; letter-spacing: .14em; color: var(--ink-dim); text-transform: uppercase; }
+.version {
+  font-family: var(--mono); font-size: 10px; color: var(--trace);
+  border: 1px solid var(--chip-line); background: var(--chip-fill);
+  border-radius: 9px; padding: 2px 8px;
+}
 .programbar { display: flex; align-items: center; gap: 12px; margin-left: auto; }
 
 .field { display: flex; align-items: center; gap: 7px; font-size: 9px; letter-spacing: .12em; color: var(--ink-dim); }

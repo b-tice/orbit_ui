@@ -1,5 +1,9 @@
 # Orbit UI — assignment editor (concept demo)
 
+Live at <https://b-tice.github.io/orbit_ui/>. The current version is shown
+in the page header (`APP_VERSION` in `orbit.js`) and bumps with every
+feature addition.
+
 A standalone web page that demos the Orbit pedal's assignment UI: setting
 response **curves** and **spans** (dead zones) for the pitch and yaw axes.
 It is not connected to the device — it's a UI concept for review, based on

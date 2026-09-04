@@ -6,6 +6,9 @@
 
 'use strict';
 
+/* Bump on every feature addition; shown in the header and exports. */
+const APP_VERSION = '1.0';
+
 /* ── state ───────────────────────────────────────────────────────── */
 
 const STORE_KEY = 'orbit_ui_state_v1';
@@ -616,7 +619,7 @@ function exportText() {
   const lines = [];
   const rule = '─'.repeat(52);
   lines.push(`ORBIT PROGRAM ${String(p.num).padStart(3, '0')} · "${p.name}"`);
-  lines.push(`exported ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`);
+  lines.push(`orbit ui v${APP_VERSION} · exported ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`);
   lines.push('');
   for (const key of ['yaw', 'pitch']) {
     const a = state.axes[key];
@@ -651,6 +654,7 @@ function exportText() {
 
 function exportJSON() {
   const out = {
+    version: APP_VERSION,
     program: { ...state.program },
     axes: {},
   };
@@ -726,6 +730,8 @@ document.getElementById('resetBtn').addEventListener('click', () => {
   buildPanels();
   for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
 });
+
+document.getElementById('appVersion').textContent = 'v' + APP_VERSION;
 
 buildPanels();
 for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
