@@ -49,8 +49,8 @@ polarity switch, per the response-curves-cover-polarity discussion.
 | double-click / double-tap empty area | add a point |
 | tap a point | popover: numeric travel/value, MIDI ch + CC of its zone, delete |
 | tap a span | popover: Dead / Freeze / Note mode (+ ch & note #), delete |
-| drag a span's edge | resize the span |
-| drag a span's body | move the span |
+| drag a span's edge | resize the span — curve points in the adjacent live zone rescale to follow (v1.1) |
+| drag a span's body | move the span — curves in both neighboring live zones rescale (v1.1) |
 | **+ span** button | drops a new span in the widest live gap |
 | tap a `CH·CC` chip | popover: live zone's MIDI channel and CC number |
 | **smooth** toggle | linear ↔ monotone-cubic curve interpolation |

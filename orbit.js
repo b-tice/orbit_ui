@@ -7,7 +7,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.0';
+const APP_VERSION = '1.1';
 
 /* ── state ───────────────────────────────────────────────────────── */
 
@@ -104,6 +104,31 @@ function syncRegions(axis) {
     takenCC.push(nextCC);
     return { lo: g.lo, hi: g.hi, ch: 1, cc: nextCC };
   });
+}
+
+/* Linearly remap points whose x lies in a range's [oldLo,oldHi] to its
+   [newLo,newHi] — used so live-zone curves stretch with a moving span
+   boundary. Each point is classified once against its original x. */
+function remapPoints(axis, ranges) {
+  const eps = 1e-6;
+  for (const p of axis.points) {
+    for (const r of ranges) {
+      if (r.oldHi - r.oldLo > eps && p.x >= r.oldLo - eps && p.x <= r.oldHi + eps) {
+        const u = (p.x - r.oldLo) / (r.oldHi - r.oldLo);
+        p.x = r.newLo + u * (r.newHi - r.newLo);
+        break;
+      }
+    }
+  }
+}
+
+/* live-zone boundaries adjacent to span s: nearest other span edge (or 0/1) */
+function neighborBounds(axis, s) {
+  const others = sortedSpans(axis).filter(x => x.id !== s.id);
+  return {
+    left: others.reduce((b, o) => (o.hi <= s.lo + 1e-9 && o.hi > b ? o.hi : b), 0),
+    right: others.reduce((b, o) => (o.lo >= s.hi - 1e-9 && o.lo < b ? o.lo : b), 1),
+  };
 }
 
 function regionAt(axis, t) {
@@ -385,14 +410,19 @@ function wireEditor(svg, axis) {
       const s = axis.spans.find(x => x.id === drag.id);
       if (s) {
         const others = sortedSpans(axis).filter(x => x.id !== s.id);
+        const nb = neighborBounds(axis, s);
         if (drag.side === 'lo') {
           let lo = Math.min(t, s.hi - MIN_SPAN);
           for (const o of others) if (o.hi <= s.hi && o.hi > lo) lo = o.hi;
-          s.lo = Math.max(0, lo);
+          lo = Math.max(0, lo);
+          remapPoints(axis, [{ oldLo: nb.left, oldHi: s.lo, newLo: nb.left, newHi: lo }]);
+          s.lo = lo;
         } else {
           let hi = Math.max(t, s.lo + MIN_SPAN);
           for (const o of others) if (o.lo >= s.lo && o.lo < hi) hi = o.lo;
-          s.hi = Math.min(1, hi);
+          hi = Math.min(1, hi);
+          remapPoints(axis, [{ oldLo: s.hi, oldHi: nb.right, newLo: hi, newHi: nb.right }]);
+          s.hi = hi;
         }
         commit(axis);
       }
@@ -409,6 +439,11 @@ function wireEditor(svg, axis) {
         }
         if (lo < 0) { lo = 0; hi = wSpan; }
         if (hi > 1) { hi = 1; lo = 1 - wSpan; }
+        const nb = neighborBounds(axis, s);
+        remapPoints(axis, [
+          { oldLo: nb.left, oldHi: s.lo, newLo: nb.left, newHi: lo },
+          { oldLo: s.hi, oldHi: nb.right, newLo: hi, newHi: nb.right },
+        ]);
         s.lo = lo; s.hi = hi;
         commit(axis);
       }
