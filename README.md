@@ -57,8 +57,8 @@ polarity switch, per the response-curves-cover-polarity discussion.
 | drag the ▲ marker | simulate pedal position; readout shows the CC (or span behavior) that would be sent |
 | **Publish** | modal with the full settings as readable text or JSON, with a copy button |
 | **Save** / **+ new** | store the current program in the Library (Save updates the loaded one, + new makes a copy) (v1.2) |
-| Library row | tap to load · `+` appends to the Setlist · `×` twice deletes · drag ⠿ into the Setlist at any position (v1.2) |
-| Setlist row | drag ⠿ to reorder — position is the 1:1 program change number · `×` removes · tap loads (v1.2) |
+| Library row | tap to load · `+` appends to the Setlist · `×` twice deletes · drag the bar (anywhere, v1.3) into the Setlist at any position |
+| Setlist row | drag the bar to reorder — position is the 1:1 program change number · drag it onto the Library to remove (v1.3) · `×` removes · tap loads |
 
 Program name (10 chars, like GC patches) and number (1–128) sit in the
 header and are included in the published output. State persists in

@@ -7,7 +7,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.2';
+const APP_VERSION = '1.3';
 
 /* ── state ───────────────────────────────────────────────────────── */
 
@@ -771,35 +771,43 @@ setListEl.addEventListener('click', e => {
   loadProgram(state.setlist[idx]);
 });
 
-/* pointer-based row drag: library → setlist insert, setlist reorder */
+/* pointer-based row drag — grab anywhere on a bar (buttons excluded).
+   A ~6px movement threshold separates a drag from a tap-to-load.
+   library → setlist inserts · setlist ↕ reorders · setlist → library removes. */
+let swallowClick = false;
+document.addEventListener('click', e => {
+  if (swallowClick) {
+    swallowClick = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }
+}, true);
+
 function wireRowDrag(listEl, kind) {
   listEl.addEventListener('pointerdown', e => {
-    const grip = e.target.closest('.grip');
-    const row = grip && grip.closest('li');
+    if (e.button) return;
+    if (e.target.closest('button')) return;
+    const row = e.target.closest(kind === 'lib' ? '.lib-row' : '.set-row');
     if (!row) return;
-    e.preventDefault();
 
+    const startX = e.clientX, startY = e.clientY;
     const r = row.getBoundingClientRect();
-    const ghost = row.cloneNode(true);
-    ghost.classList.add('drag-ghost');
-    ghost.style.width = r.width + 'px';
-    document.body.appendChild(ghost);
-    const ph = document.createElement('li');
-    ph.className = 'set-drop';
-    const d = {
-      kind, ghost, ph, active: false, dropIdx: 0,
-      id: row.dataset.id,
-      oldIdx: row.dataset.idx != null ? +row.dataset.idx : -1,
-    };
-    if (kind === 'set') row.classList.add('dragging');
+    const id = row.dataset.id;
+    const oldIdx = row.dataset.idx != null ? +row.dataset.idx : -1;
+    let ghost = null, ph = null, active = false, overLib = false, dropIdx = 0;
 
     const place = ev => {
       ghost.style.transform = `translate(${ev.clientX + 10}px, ${ev.clientY - r.height / 2}px)`;
+      const lrect = libListEl.getBoundingClientRect();
+      overLib = kind === 'set'
+             && ev.clientX > lrect.left && ev.clientX < lrect.right
+             && ev.clientY > lrect.top && ev.clientY < lrect.bottom;
+      libListEl.classList.toggle('drop-remove', overLib);
       const rect = setListEl.getBoundingClientRect();
-      const inside = ev.clientX > rect.left - 24 && ev.clientX < rect.right + 24
-                  && ev.clientY > rect.top - 12 && ev.clientY < rect.bottom + 24;
-      if (!inside) {
-        d.active = false;
+      const inSet = ev.clientX > rect.left - 24 && ev.clientX < rect.right + 24
+                 && ev.clientY > rect.top - 12 && ev.clientY < rect.bottom + 24;
+      if (!inSet || overLib) {
+        active = false;
         if (ph.parentNode) ph.remove();
         return;
       }
@@ -809,30 +817,50 @@ function wireRowDrag(listEl, kind) {
         const m = rows[i].getBoundingClientRect();
         if (ev.clientY < m.top + m.height / 2) { idx = i; break; }
       }
-      d.active = true;
-      d.dropIdx = idx;
+      active = true;
+      dropIdx = idx;
       if (idx < rows.length) setListEl.insertBefore(ph, rows[idx]);
       else setListEl.appendChild(ph);
     };
-    place(e);
+
+    const move = ev => {
+      if (!ghost) {
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
+        ghost = row.cloneNode(true);
+        ghost.classList.add('drag-ghost');
+        ghost.style.width = r.width + 'px';
+        document.body.appendChild(ghost);
+        ph = document.createElement('li');
+        ph.className = 'set-drop';
+        if (kind === 'set') row.classList.add('dragging');
+      }
+      place(ev);
+    };
 
     const up = () => {
-      document.removeEventListener('pointermove', place);
+      document.removeEventListener('pointermove', move);
       document.removeEventListener('pointerup', up);
+      if (!ghost) return; /* never crossed the threshold: it's a tap */
+      swallowClick = true;
+      setTimeout(() => { swallowClick = false; }, 0);
       ghost.remove();
       if (ph.parentNode) ph.remove();
-      if (d.active) {
+      libListEl.classList.remove('drop-remove');
+      if (active) {
         if (kind === 'lib') {
-          state.setlist.splice(d.dropIdx, 0, d.id);
+          state.setlist.splice(dropIdx, 0, id);
         } else {
-          const [moved] = state.setlist.splice(d.oldIdx, 1);
-          state.setlist.splice(d.dropIdx, 0, moved);
+          const [moved] = state.setlist.splice(oldIdx, 1);
+          state.setlist.splice(dropIdx, 0, moved);
         }
+        saveState();
+      } else if (overLib) {
+        state.setlist.splice(oldIdx, 1);
         saveState();
       }
       renderLibrarian(); /* also clears .dragging */
     };
-    document.addEventListener('pointermove', place);
+    document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
   });
 }

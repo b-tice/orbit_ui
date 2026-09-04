@@ -206,6 +206,7 @@ svg .span-label { fill: var(--span-edge); letter-spacing: .08em; }
   border: 1px solid var(--well-line); border-radius: 8px;
   background: hsl(250 22% 10%); cursor: pointer;
   font-size: 10px; letter-spacing: .1em;
+  touch-action: none; user-select: none; -webkit-user-select: none;
 }
 .lib-row.on, .set-row.on { border-color: var(--chip-line); background: var(--chip-fill); }
 .lib-name { flex: 1; color: var(--ink); text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -236,6 +237,7 @@ svg .span-label { fill: var(--span-edge); letter-spacing: .08em; }
   box-shadow: 0 6px 18px hsl(250 45% 3% / .8);
 }
 .set-row.dragging { display: none; }
+.lib-list.drop-remove { border-color: hsl(0 40% 42%); box-shadow: inset 0 0 12px hsl(0 50% 25% / .4); }
 .set-drop {
   height: 3px; border-radius: 2px; margin: 0 4px; list-style: none;
   background: var(--sim); box-shadow: 0 0 8px var(--sim);
