@@ -16,7 +16,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.10';
+const APP_VERSION = '1.11';
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -175,8 +175,10 @@ function isPlainRamp(zones) {
 }
 const defaultOutputs = key => ({
   midi:   { zones: defaultZones(key) },
-  analog: { zones: defaultAnalogZones(key) },
+  analog: { zones: defaultAnalogZones(key), invert: false },   /* invert: 5→0 V instead of 0→5 V */
 });
+/* the voltage a jack actually puts out for a curve value, honoring polarity */
+const jackV = (axis, v) => (axis.outputs.analog.invert ? VOLTS - toV(v) : toV(v));
 
 /* one library file: the zones of both axes for ONE output */
 const mkFile = (name, axesZones) => ({ id: uid(), name, axes: JSON.parse(JSON.stringify(axesZones)) });
@@ -251,10 +253,11 @@ function migrateAxes(axes, layerOn) {
     const a = axes[key];
     if (a.outputs) {
       for (const tab of ['midi', 'analog']) for (const z of a.outputs[tab].zones) if (z.speedMs === undefined) z.speedMs = DEFAULT_SWITCH_MS;
+      if (a.outputs.analog.invert === undefined) a.outputs.analog.invert = false;
       continue;
     }
     if (a.zones) {           /* v1.8: a single zone set = the MIDI tab */
-      a.outputs = { midi: { zones: a.zones }, analog: { zones: defaultAnalogZones(key) } };
+      a.outputs = { midi: { zones: a.zones }, analog: { zones: defaultAnalogZones(key), invert: false } };
       delete a.zones;
       continue;
     }
@@ -269,7 +272,7 @@ function migrateAxes(axes, layerOn) {
     } else {
       zones = defaultZones(key);
     }
-    a.outputs = { midi: { zones }, analog: { zones: defaultAnalogZones(key) } };
+    a.outputs = { midi: { zones }, analog: { zones: defaultAnalogZones(key), invert: false } };
     delete a.layers; delete a.points; delete a.spans; delete a.regions; delete a.smooth; delete a.baseCC;
   }
   return axes;
@@ -522,7 +525,7 @@ function zoneOutput(axis, z, t) {
   if (z.type === 'ctl') {
     if (!ctlActive(axis, z, t)) return null;
     const v = curveValue(z, t);
-    return analog ? `${toV(v).toFixed(2)}V` : `CC${z.cc} ch${z.ch}=${Math.round(v)}`;
+    return analog ? `${jackV(axis, v).toFixed(2)}V` : `CC${z.cc} ch${z.ch}=${Math.round(v)}`;
   }
   if (z.type === 'freeze') return `FRZ ${axis.freeze}`;
   if (z.type === 'note') return `♪${noteName(z.note)} ch${z.ch} v${z.vel}`;
@@ -530,7 +533,7 @@ function zoneOutput(axis, z, t) {
     const on = !!simSwitch[z.id];
     /* analog: the switch IS the jack's voltage while on; off it is silent
        and the Controller underneath shows instead */
-    if (analog) return on ? `⚡${toV(z.onVal).toFixed(2)}V` : null;
+    if (analog) return on ? `⚡${jackV(axis, z.onVal).toFixed(2)}V` : null;
     return `⚡${z.action === 'cc' ? 'CC' + z.cc : noteName(z.note)} ${on ? 'ON' : 'off'}`;
   }
   return null;
@@ -559,6 +562,12 @@ function buildPanels() {
         <div class="axis-title"><b>${axis.label}</b><small>${axis.sub}</small></div>
         <div class="axis-out"><span class="amb-led"></span><span data-out></span></div>
         <div class="axis-tools">
+          ${state.tab === 'analog' ? `<label class="polarity" title="flip the jack's output: 0→5 V or 5→0 V across the same curve">
+            <span class="pol-lbl">Polarity</span>
+            <input type="checkbox" data-invert ${axis.outputs.analog.invert ? 'checked' : ''}>
+            <span class="pol-switch"></span>
+            <span class="pol-state" data-polstate>${axis.outputs.analog.invert ? '5→0V' : '0→5V'}</span>
+          </label>` : ''}
           <button class="ghostbtn savebtn" data-save type="button" title="save this tab's Setup to its Library (lights up when this axis has unsaved changes)">save</button>
           <button class="ghostbtn" data-addzone type="button" title="add a zone — pick its type in the popover">+ Zone</button>
         </div>
@@ -572,6 +581,12 @@ function buildPanels() {
       flashProgName();
     });
     panel.querySelector('[data-addzone]').addEventListener('click', e => addZone(axis, e.clientX, e.clientY));
+    const inv = panel.querySelector('[data-invert]');
+    if (inv) inv.addEventListener('change', () => {
+      axis.outputs.analog.invert = inv.checked;
+      panel.querySelector('[data-polstate]').textContent = inv.checked ? '5→0V' : '0→5V';
+      commit(axis);
+    });
     wireEditor(svg, axis);
   }
 }
@@ -625,10 +640,14 @@ function render(axis) {
   </defs>`);
 
   /* value gridlines + labels */
+  /* on an inverted analog axis the graph stays put but the labels read the
+     real voltage: 5.0V at the bottom, 0.0V at the top */
+  const inv = state.tab === 'analog' && !!axis.outputs.analog.invert;
   for (const v of [0, 63.5, 127]) {
     const y = g.ty(v);
+    const lv = v === 63.5 ? 64 : v;
     parts.push(`<line x1="${g.x0}" y1="${y}" x2="${g.x1}" y2="${y}" stroke="var(--well-line)" stroke-dasharray="2 5"/>`);
-    parts.push(`<text x="${g.x0 - 8}" y="${y + 3}" font-size="9" text-anchor="end">${OUT().gridLabel(v === 63.5 ? 64 : v)}</text>`);
+    parts.push(`<text x="${g.x0 - 8}" y="${y + 3}" font-size="9" text-anchor="end">${OUT().gridLabel(inv ? 127 - lv : lv)}</text>`);
   }
   /* travel ticks */
   for (const t of [0, 0.25, 0.5, 0.75, 1]) {
@@ -748,7 +767,8 @@ function render(axis) {
     .sort((a, b) => (a.type === 'switch') - (b.type === 'switch') || a.lo - b.lo)
     .map(z => zoneOutput(axis, z, axis.sim))
     .filter(Boolean);
-  ed.outEl.textContent = outs.length ? outs.join(' · ') : 'DEAD';
+  ed.outEl.textContent = (outs.length ? outs.join(' · ') : 'DEAD')
+    + (state.tab === 'analog' && axis.outputs.analog.invert ? '  ⇅' : '');
 }
 
 function commit(axis) {
@@ -765,7 +785,8 @@ function axisDirty(axis) {
   const f = state.loaded[tab] ? libFile(state.loaded[tab], tab) : null;
   if (!f) return true;
   const name = (state.names[tab] || 'UNTITLED').toUpperCase().slice(0, 10);
-  return name !== f.name || JSON.stringify(Z(axis)) !== JSON.stringify(f.axes[axis.key]);
+  return name !== f.name || JSON.stringify(Z(axis)) !== JSON.stringify(f.axes[axis.key])
+    || (tab === 'analog' && !!axis.outputs.analog.invert !== !!fileInv(f)[axis.key]);
 }
 function updateSaveButtons() {
   for (const key of ['yaw', 'pitch']) {
@@ -1111,6 +1132,9 @@ const lib = tab => state.library[tab || state.tab];
 function libFile(id, tab) { return lib(tab).find(x => x.id === id) || null; }
 const curName = () => (state.names[state.tab] || 'UNTITLED').toUpperCase().slice(0, 10);
 const axesZones = tab => ({ yaw: state.axes.yaw.outputs[tab].zones, pitch: state.axes.pitch.outputs[tab].zones });
+/* analog files also carry each axis's polarity */
+const axesInv = () => ({ yaw: !!state.axes.yaw.outputs.analog.invert, pitch: !!state.axes.pitch.outputs.analog.invert });
+const fileInv = f => (f && f.inv) || { yaw: false, pitch: false };
 
 /* the current tab's loaded file's 1-based Set List position (its PC number), or null */
 function loadedPC() {
@@ -1133,6 +1157,7 @@ function saveProgram(asNew, tab) {
     lib(tab).push(f);
     state.loaded[tab] = f.id;
   }
+  if (tab === 'analog') f.inv = axesInv();
   saveState();
   renderLibrarian();
   updateSaveButtons();
@@ -1142,7 +1167,10 @@ function saveProgram(asNew, tab) {
 function loadFile(id, tab) {
   const f = libFile(id, tab);
   if (!f) return false;
-  for (const key of ['yaw', 'pitch']) state.axes[key].outputs[tab].zones = JSON.parse(JSON.stringify(f.axes[key]));
+  for (const key of ['yaw', 'pitch']) {
+    state.axes[key].outputs[tab].zones = JSON.parse(JSON.stringify(f.axes[key]));
+    if (tab === 'analog') state.axes[key].outputs.analog.invert = !!fileInv(f)[key];
+  }
   state.names[tab] = f.name;
   state.loaded[tab] = id;
   return true;
@@ -1434,7 +1462,8 @@ function isDirty(tab) {
   const f = state.loaded[tab] ? libFile(state.loaded[tab], tab) : null;
   if (!f) return false;
   const name = (state.names[tab] || 'UNTITLED').toUpperCase().slice(0, 10);
-  return name !== f.name || JSON.stringify(axesZones(tab)) !== JSON.stringify(f.axes);
+  return name !== f.name || JSON.stringify(axesZones(tab)) !== JSON.stringify(f.axes)
+    || (tab === 'analog' && JSON.stringify(axesInv()) !== JSON.stringify(fileInv(f)));
 }
 const dirtyTabs = () => TAB_ORDER.filter(t => isDirty(t));
 const askWrap = document.getElementById('askWrap');

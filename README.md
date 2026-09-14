@@ -54,7 +54,12 @@ Controller zone drives: a transmit channel + CC (0–127) on MIDI, or the
 axis's **EXP jack** (0–5 V) on Analog Out — pitch is EXP 1 and yaw is EXP 2,
 fixed by the hardware, so there is nothing to pick. The Analog tab offers
 only Controller, Switch and Dead zones and has no chips; its Switch zones
-toggle the jack between two voltages. The ▲ sim marker is shared (it is the same pedal).
+toggle the jack between two voltages. Each Analog axis has a **Polarity** toggle in its header: on, the
+jack's output is inverted (5→0 V instead of 0→5 V) across the same curve, the
+graph stays as drawn but its voltage labels flip (5.0 V at the bottom), the
+readout shows the actual voltage with a ⇅ mark,
+and the setting saves with the Analog Setup. The ▲ sim marker is shared (it
+is the same pedal).
 
 **Saving is per tab.** Each axis header has a **save** button that stores the
 current tab's zones (both axes) as a Setup in that tab's Library, so a MIDI
