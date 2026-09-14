@@ -7,7 +7,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.5';
+const APP_VERSION = '1.6';
 
 /* ── state ───────────────────────────────────────────────────────── */
 
@@ -957,8 +957,9 @@ function wireRowDrag(listEl, kind) {
 wireRowDrag(libListEl, 'lib');
 wireRowDrag(setListEl, 'set');
 
-document.getElementById('saveBtn').addEventListener('click', () => saveProgram(false));
-document.getElementById('saveNewBtn').addEventListener('click', () => saveProgram(true));
+/* v1.6: Save and + new open the review modal first; the modal's Save commits. */
+document.getElementById('saveBtn').addEventListener('click', () => showSaveModal(false));
+document.getElementById('saveNewBtn').addEventListener('click', () => showSaveModal(true));
 
 /* ── MIDI receive: global channel + program change → setlist slot ── */
 
@@ -1029,7 +1030,7 @@ layerTabs.forEach((t, i) => {
   });
 });
 
-/* ── publish ─────────────────────────────────────────────────────── */
+/* ── save review (was: publish) ──────────────────────────────────── */
 
 function exportText() {
   const p = state.program;
@@ -1117,17 +1118,39 @@ function exportJSON() {
 
 const modalWrap = document.getElementById('modalWrap');
 const modalPre = document.getElementById('modalPre');
+const modalTitle = document.getElementById('modalTitle');
 let modalFmt = 'text';
+let modalAsNew = false;   // which save the modal's Save button performs
 
-function showModal() {
+/* Open the review window for the current program. Nothing is stored until
+   the modal's Save button is pressed; Cancel / scrim / Esc close it. */
+function showSaveModal(asNew) {
+  modalAsNew = asNew;
   modalFmt = 'text';
   document.querySelectorAll('.modal-tabs .tab').forEach(b => b.classList.toggle('on', b.dataset.fmt === 'text'));
   modalPre.textContent = exportText();
+  const updating = !asNew && state.loadedId && libEntry(state.loadedId);
+  modalTitle.textContent = asNew ? 'SAVE AS NEW PROGRAM' : (updating ? 'SAVE PROGRAM' : 'SAVE TO LIBRARY');
   modalWrap.hidden = false;
+  document.getElementById('confirmSaveBtn').focus();
 }
-document.getElementById('publishBtn').addEventListener('click', showModal);
-document.getElementById('closeBtn').addEventListener('click', () => { modalWrap.hidden = true; });
-document.getElementById('modalScrim').addEventListener('click', () => { modalWrap.hidden = true; });
+function hideModal() { modalWrap.hidden = true; }
+/* brief confirmation on the NAME field after a save (same glow as a MIDI-in load) */
+function flashProgName() {
+  const el = document.getElementById('progName');
+  el.classList.remove('saved');
+  void el.offsetWidth;   // restart the animation if it's still running
+  el.classList.add('saved');
+  el.addEventListener('animationend', () => el.classList.remove('saved'), { once: true });
+}
+document.getElementById('confirmSaveBtn').addEventListener('click', () => {
+  saveProgram(modalAsNew);
+  hideModal();
+  flashProgName();
+});
+document.getElementById('cancelBtn').addEventListener('click', hideModal);
+document.getElementById('modalScrim').addEventListener('click', hideModal);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modalWrap.hidden) hideModal(); });
 document.querySelectorAll('.modal-tabs .tab').forEach(b => {
   b.addEventListener('click', () => {
     modalFmt = b.dataset.fmt;

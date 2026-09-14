@@ -296,6 +296,7 @@ svg .span-label { fill: var(--span-edge); letter-spacing: .08em; }
   100% { border-color: var(--chip-line); box-shadow: none; }
 }
 .set-row.rx { animation: rxflash .9s ease-out; }
+#progName.saved { animation: rxflash .9s ease-out; }
 .set-drop {
   height: 3px; border-radius: 2px; margin: 0 4px; list-style: none;
   background: var(--sim); box-shadow: 0 0 8px var(--sim);

@@ -66,15 +66,14 @@ exports). Layer on/off state is saved per program in the library.
 | tap a `CH·CC` chip | popover: live zone's MIDI channel and CC number |
 | **smooth** toggle | linear ↔ monotone-cubic curve interpolation |
 | drag the ▲ marker | simulate pedal position; readout shows the CC (or span behavior) that would be sent |
-| **Publish** | modal with the full settings as readable text or JSON, with a copy button |
-| **Save** / **+ new** | store the current program in the Library (Save updates the loaded one, + new makes a copy) (v1.2) |
+| **Save** / **+ new** | open a review window showing the full program as readable text or JSON (with a copy button); its **Save** stores the program in the Library (Save updates the loaded one, + new makes a copy), **Cancel** / Esc closes without storing (v1.2, review step v1.6) |
 | **GLOBAL CH** | the channel Orbit *receives* on (1–16 or OMNI) — separate from the send channels (v1.4) |
 | **MIDI IN · TEST** | simulate an incoming program change: on the global channel it loads that setlist slot (with a flash); otherwise it's ignored (v1.4) |
 | Library row | tap to load · `+` appends to the Setlist · `×` twice deletes · drag the bar (anywhere, v1.3) into the Setlist at any position |
 | Setlist row | drag the bar to reorder — position is the 1:1 program change number · drag it onto the Library to remove (v1.3) · `×` removes · tap loads |
 
 Program name (10 chars, like GC patches) and number (1–128) sit in the
-header and are included in the published output. State persists in
+header and are included in the review window's output. State persists in
 `localStorage`; the *reset demo* button restores the default layout
 (the "bipolar Mid=Hi" yaw example and a simple heel→toe pitch ramp).
 
@@ -91,6 +90,6 @@ offline).
 
 - `index.html` — page shell
 - `orbit.css` — night theme overrides + app/editor styles
-- `orbit.js` — all editor logic (state, SVG rendering, gestures, publish)
+- `orbit.js` — all editor logic (state, SVG rendering, gestures, save review)
 - `ambient.css` — vendored Ambient CSS (unmodified, attributed)
 - `reference/` — David's two source sketches

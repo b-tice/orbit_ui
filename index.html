@@ -35,9 +35,6 @@
     <button class="amb-button ambx-press-sm" id="saveBtn" type="button" title="save to library">
       <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Save</span>
     </button>
-    <button class="amb-button ambx-press-sm" id="publishBtn" type="button">
-      <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Publish</span>
-    </button>
   </div>
 </header>
 
@@ -95,7 +92,7 @@
   <div id="modalScrim"></div>
   <div id="modal" class="ambient amb-surface amb-chamfer amb-elevation-3 amb-mat-blasted amb-rounded-xl">
     <div class="modal-head">
-      <h2>PUBLISHED SETTINGS</h2>
+      <h2 id="modalTitle">SAVE PROGRAM</h2>
       <div class="modal-tabs">
         <button class="ghostbtn tab on" data-fmt="text" type="button">TEXT</button>
         <button class="ghostbtn tab" data-fmt="json" type="button">JSON</button>
@@ -106,8 +103,11 @@
       <button class="amb-button ambx-press-sm" id="copyBtn" type="button">
         <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Copy</span>
       </button>
-      <button class="amb-button ambx-press-sm" id="closeBtn" type="button">
-        <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Close</span>
+      <button class="amb-button ambx-press-sm" id="cancelBtn" type="button">
+        <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Cancel</span>
+      </button>
+      <button class="amb-button ambx-press-sm" id="confirmSaveBtn" type="button">
+        <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Save</span>
       </button>
     </div>
   </div>
