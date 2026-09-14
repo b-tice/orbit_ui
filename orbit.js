@@ -7,7 +7,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.6';
+const APP_VERSION = '1.7';
 
 /* ── state ───────────────────────────────────────────────────────── */
 
@@ -261,8 +261,8 @@ function buildPanels() {
         <div class="axis-title"><b>${axis.label}</b><small>${axis.sub}</small></div>
         <div class="axis-out"><span class="amb-led"></span><span data-out></span></div>
         <div class="axis-tools">
-          <button class="ghostbtn ${act(axis).smooth ? 'on' : ''}" data-smooth type="button">smooth</button>
-          <button class="ghostbtn" data-addspan type="button">+ span</button>
+          <button class="ghostbtn ${act(axis).smooth ? 'on' : ''}" data-smooth type="button" title="response curve: linear ↔ smooth">smooth</button>
+          <button class="ghostbtn" data-addspan type="button" title="add a zone (dead / freeze / note) in the widest controller zone">+ Zone</button>
         </div>
       </div>
       <div class="editor-well"><svg data-axis="${key}"></svg></div>`;
@@ -655,8 +655,8 @@ function openPointPopover(axis, idx, cx, cy) {
       ${numRow('Value', 'ppy', Math.round(p.y), 0, 127)}
       <hr class="pop-sep">
       ${region
-        ? `${numRow('MIDI Chan', 'pch', region.ch, 1, 16)}${numRow('CC #', 'pcc', region.cc, 0, 127)}`
-        : `<div class="pop-note">point sits inside a span<br>(curve inactive here)</div>`}
+        ? `${numRow('Transmit ch', 'pch', region.ch, 1, 16)}${numRow('CC #', 'pcc', region.cc, 0, 127)}`
+        : `<div class="pop-note">point sits inside a zone<br>(response curve inactive here)</div>`}
       <button class="dangerbtn" id="pdel" type="button">delete point</button>
     </div>`, cx, cy);
 
@@ -682,18 +682,18 @@ function openSpanPopover(axis, s, cx, cy) {
     { id: 'note', label: 'Send MIDI note' },
   ];
   const noteRows = s.mode === 'note'
-    ? `${numRow('MIDI Chan', 'sch', s.ch, 1, 16)}
+    ? `${numRow('Transmit ch', 'sch', s.ch, 1, 16)}
        ${numRow('Note #', 'snote', s.note, 0, 127)}
        <div class="pop-row"><label>Note</label><span class="pop-note" id="snName">${noteName(s.note)}</span></div>`
     : '';
   openPopover(`
-    <h3><span class="amb-led"></span>Span &nbsp;<span class="pop-note">${pct(s.lo)} – ${pct(s.hi)}</span></h3>
+    <h3><span class="amb-led"></span>Zone &nbsp;<span class="pop-note">${pct(s.lo)} – ${pct(s.hi)}</span></h3>
     <div class="pop-rows">
       <div class="mode-list">
         ${modes.map(m => `<button class="mode-btn ${s.mode === m.id ? 'on' : ''}" data-mode="${m.id}" type="button"><span class="dot"></span>${m.label}</button>`).join('')}
       </div>
       ${noteRows}
-      <button class="dangerbtn" id="sdel" type="button">delete span</button>
+      <button class="dangerbtn" id="sdel" type="button">delete zone</button>
     </div>`, cx, cy);
 
   pop.querySelectorAll('.mode-btn').forEach(b => {
@@ -725,11 +725,11 @@ function openRegionPopover(axis, idx, cx, cy) {
   const r = act(axis).regions[idx];
   if (!r) return;
   openPopover(`
-    <h3><span class="amb-led"></span>Live zone &nbsp;<span class="pop-note">${pct(r.lo)} – ${pct(r.hi)}</span></h3>
+    <h3><span class="amb-led"></span>Controller zone &nbsp;<span class="pop-note">${pct(r.lo)} – ${pct(r.hi)}</span></h3>
     <div class="pop-rows">
-      ${numRow('MIDI Chan', 'rch', r.ch, 1, 16)}
+      ${numRow('Transmit ch', 'rch', r.ch, 1, 16)}
       ${numRow('CC #', 'rcc', r.cc, 0, 127)}
-      <div class="pop-note">sends CC on this channel while the pedal travels this zone</div>
+      <div class="pop-note">sends this CC on this channel while the pedal travels the zone</div>
     </div>`, cx, cy);
   const rch = pop.querySelector('#rch');
   rch.addEventListener('input', () => { r.ch = clampi(parseFloat(rch.value), 1, 16); commit(axis); });
@@ -791,12 +791,11 @@ function renderLibrarian() {
   libListEl.innerHTML = state.library.length
     ? state.library.map(en => `
       <li class="lib-row${en.id === state.loadedId ? ' on' : ''}" data-id="${en.id}">
-        <span class="grip" title="drag into setlist">⠿</span>
         <span class="lib-name">${esc(en.name)}</span>
-        <button class="rowbtn" data-add type="button" title="append to setlist">+</button>
+        <button class="rowbtn" data-add type="button" title="append to the set list">+</button>
         <button class="rowbtn" data-del type="button" title="delete (tap twice)">×</button>
       </li>`).join('')
-    : '<li class="lib-empty">empty — SAVE stores the current program</li>';
+    : '<li class="lib-empty">empty — SAVE stores the current Setup</li>';
   setListEl.innerHTML = state.setlist.length
     ? state.setlist.map((id, i) => {
       const en = libEntry(id);
@@ -808,7 +807,7 @@ function renderLibrarian() {
         <button class="rowbtn" data-del type="button" title="remove">×</button>
       </li>`;
     }).join('')
-    : '<li class="lib-empty">drag programs here — order sets the PC #</li>';
+    : '<li class="lib-empty">drag Setups here — order sets the PC #</li>';
   progNum.value = loadedPC() ?? '—';
 }
 
@@ -844,7 +843,8 @@ libListEl.addEventListener('click', e => {
     return;
   }
   if (e.target.closest('.grip')) return;
-  loadProgram(id);
+  if (id === state.loadedId && !isDirty()) return;   /* already loaded, nothing to revert */
+  guardUnsaved('loading another Setup', () => loadProgram(id));
 });
 
 setListEl.addEventListener('click', e => {
@@ -858,7 +858,7 @@ setListEl.addEventListener('click', e => {
     return;
   }
   if (e.target.closest('.grip')) return;
-  loadProgram(state.setlist[idx]);
+  guardUnsaved('loading another Setup', () => loadProgram(state.setlist[idx]));
 });
 
 /* pointer-based row drag — grab anywhere on a bar (buttons excluded).
@@ -959,7 +959,41 @@ wireRowDrag(setListEl, 'set');
 
 /* v1.6: Save and + new open the review modal first; the modal's Save commits. */
 document.getElementById('saveBtn').addEventListener('click', () => showSaveModal(false));
-document.getElementById('saveNewBtn').addEventListener('click', () => showSaveModal(true));
+document.getElementById('saveNewBtn').addEventListener('click', () => guardUnsaved('creating a new Setup', () => showSaveModal(true)));
+
+/* ── v1.7: unsaved-changes guard ──────────────────────────────────
+   The loaded Setup is "dirty" when the editor differs from its Library
+   copy. Anything that would replace the editor contents goes through
+   guardUnsaved(): clean → proceed; dirty → Save / Discard / Cancel. */
+function isDirty() {
+  const en = state.loadedId ? libEntry(state.loadedId) : null;
+  if (!en) return false;
+  const name = (state.program.name || 'UNTITLED').toUpperCase().slice(0, 10);
+  return name !== en.name
+    || JSON.stringify(state.axes) !== JSON.stringify(en.axes)
+    || JSON.stringify(state.layerOn) !== JSON.stringify(en.layerOn || [true, false]);
+}
+const askWrap = document.getElementById('askWrap');
+let askThen = null;
+function guardUnsaved(what, then) {
+  if (!isDirty()) { then(); return; }
+  const en = libEntry(state.loadedId);
+  document.getElementById('askText').textContent = `"${en.name}" has unsaved changes. Save them before ${what}?`;
+  askThen = then;
+  askWrap.hidden = false;
+  document.getElementById('askSave').focus();
+}
+function askClose() { askWrap.hidden = true; askThen = null; }
+document.getElementById('askCancel').addEventListener('click', askClose);
+document.getElementById('askScrim').addEventListener('click', askClose);
+document.getElementById('askDiscard').addEventListener('click', () => { const t = askThen; askClose(); if (t) t(); });
+document.getElementById('askSave').addEventListener('click', () => {
+  const t = askThen; askClose();
+  saveProgram(false);
+  flashProgName();
+  if (t) t();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !askWrap.hidden) askClose(); });
 
 /* ── MIDI receive: global channel + program change → setlist slot ── */
 
@@ -972,15 +1006,20 @@ globalChSel.addEventListener('change', () => {
   saveState();
 });
 
-/* the device rule: a PC on the global channel selects that setlist slot */
-function receiveProgramChange(ch, pc) {
+/* the device rule: a PC on the receive channel selects that set list slot */
+function receiveProgramChange(ch, pc, force) {
   const gch = state.globalCh;
   if (gch !== 'omni' && ch !== gch) {
-    return { ok: false, msg: `PC ${pc} ch${ch} — ignored (global ch ${gch})` };
+    return { ok: false, msg: `PC ${pc} ch${ch} — ignored (receive ch ${gch})` };
   }
   const id = state.setlist[pc - 1];
   if (!id || !libEntry(id)) {
-    return { ok: false, msg: `PC ${pc} ch${ch} — no setlist slot ${pc}` };
+    return { ok: false, msg: `PC ${pc} ch${ch} — no set list slot ${pc}` };
+  }
+  if (!force && isDirty()) {
+    /* ask first; on Save/Discard re-run with force so we don't ask twice */
+    guardUnsaved(`switching to set list slot ${pc}`, () => showMiLog(receiveProgramChange(ch, pc, true)));
+    return { ok: false, msg: `PC ${pc} ch${ch} — waiting: unsaved changes` };
   }
   loadProgram(id);
   const row = setListEl.querySelector(`.set-row[data-idx="${pc - 1}"]`);
@@ -995,11 +1034,13 @@ const miCh = document.getElementById('miCh');
 miCh.innerHTML = Array.from({ length: 16 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('');
 miCh.value = '16';
 const miLog = document.getElementById('miLog');
-document.getElementById('miSend').addEventListener('click', () => {
-  const pc = clampi(parseFloat(document.getElementById('miPc').value), 1, 128);
-  const res = receiveProgramChange(+miCh.value, pc);
+function showMiLog(res) {
   miLog.textContent = res.msg;
   miLog.classList.toggle('ok', res.ok);
+}
+document.getElementById('miSend').addEventListener('click', () => {
+  const pc = clampi(parseFloat(document.getElementById('miPc').value), 1, 128);
+  showMiLog(receiveProgramChange(+miCh.value, pc));
 });
 
 /* ── layers: tab switching + on/off toggles ──────────────────────── */
@@ -1037,9 +1078,9 @@ function exportText() {
   const lines = [];
   const rule = '─'.repeat(52);
   const pc = loadedPC();
-  lines.push(`ORBIT PROGRAM ${pc ? String(pc).padStart(3, '0') : '---'} · "${p.name}"`);
+  lines.push(`ORBIT SETUP ${pc ? String(pc).padStart(3, '0') : '---'} · "${p.name}"`);
   lines.push(`orbit ui v${APP_VERSION} · exported ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`);
-  lines.push(`global channel: ${state.globalCh === 'omni' ? 'OMNI' : 'CH ' + state.globalCh}  (receives program changes → setlist)`);
+  lines.push(`receive channel: ${state.globalCh === 'omni' ? 'OMNI' : 'CH ' + state.globalCh}  (program changes → set list)`);
   lines.push('');
   for (const key of ['yaw', 'pitch']) {
     const a = state.axes[key];
@@ -1059,10 +1100,10 @@ function exportText() {
           let detail = 'dead';
           if (s.mode === 'freeze') detail = `freeze ${a.freeze} value`;
           if (s.mode === 'note') detail = `note on · CH ${s.ch} · #${s.note} (${noteName(s.note)})`;
-          lines.push(`    [${range}]  SPAN   ${detail}`);
+          lines.push(`    [${range}]  ZONE   ${detail}`);
         } else {
           const r = seg.region;
-          lines.push(`    (${range})  LIVE   CH ${r.ch} · CC ${r.cc}`);
+          lines.push(`    (${range})  CTL    CH ${r.ch} · CC ${r.cc}`);
           const pts = sortedPoints(ly).filter(pt => pt.x >= seg.lo - 1e-6 && pt.x <= seg.hi + 1e-6);
           if (pts.length) {
             lines.push(`${' '.repeat(23)}curve  ${pts.map(pt => `${pct(pt.x)}→${Math.round(pt.y)}`).join(',  ')}`);
@@ -1073,7 +1114,7 @@ function exportText() {
     lines.push('');
   }
   if (state.setlist.length) {
-    lines.push('SETLIST  (1:1 program change map)');
+    lines.push('SET LIST  (1:1 program change map)');
     lines.push(rule);
     state.setlist.forEach((id, i) => {
       const en = libEntry(id);
@@ -1087,8 +1128,8 @@ function exportText() {
 function exportJSON() {
   const out = {
     version: APP_VERSION,
-    globalChannel: state.globalCh,
-    program: { num: loadedPC(), name: state.program.name },
+    receiveChannel: state.globalCh,
+    setup: { num: loadedPC(), name: state.program.name },
     setlist: state.setlist.map((id, i) => {
       const en = libEntry(id);
       return { pc: i + 1, name: en ? en.name : '?' };
@@ -1103,11 +1144,11 @@ function exportJSON() {
         enabled: !!state.layerOn[i],
         curveMode: ly.smooth ? 'smooth' : 'linear',
         points: sortedPoints(ly).map(p => ({ travel: +(p.x.toFixed(4)), value: Math.round(p.y) })),
-        spans: sortedSpans(ly).map(s => ({
+        zones: sortedSpans(ly).map(s => ({
           lo: +(s.lo.toFixed(4)), hi: +(s.hi.toFixed(4)), mode: s.mode,
           ...(s.mode === 'note' ? { channel: s.ch, note: s.note } : {}),
         })),
-        liveZones: ly.regions.map(r => ({
+        controllerZones: ly.regions.map(r => ({
           lo: +(r.lo.toFixed(4)), hi: +(r.hi.toFixed(4)), channel: r.ch, cc: r.cc,
         })),
       })),
@@ -1130,7 +1171,7 @@ function showSaveModal(asNew) {
   document.querySelectorAll('.modal-tabs .tab').forEach(b => b.classList.toggle('on', b.dataset.fmt === 'text'));
   modalPre.textContent = exportText();
   const updating = !asNew && state.loadedId && libEntry(state.loadedId);
-  modalTitle.textContent = asNew ? 'SAVE AS NEW PROGRAM' : (updating ? 'SAVE PROGRAM' : 'SAVE TO LIBRARY');
+  modalTitle.textContent = asNew ? 'SAVE AS NEW SETUP' : (updating ? 'SAVE SETUP' : 'SAVE TO LIBRARY');
   modalWrap.hidden = false;
   document.getElementById('confirmSaveBtn').focus();
 }
@@ -1183,15 +1224,15 @@ const progName = document.getElementById('progName');
 progName.value = state.program.name;
 progName.addEventListener('input', () => { state.program.name = progName.value.toUpperCase().slice(0, 10); saveState(); });
 
-document.getElementById('resetBtn').addEventListener('click', () => {
-  if (!confirm('Reset the demo? This also clears the library and setlist.')) return;
+document.getElementById('resetBtn').addEventListener('click', () => guardUnsaved('resetting the demo', () => {
+  if (!confirm('Reset the demo? This also clears the Library and Set List.')) return;
   state = defaultState();
   progName.value = state.program.name;
   updateLayerTabs();
   buildPanels();
   for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
   renderLibrarian();
-});
+}));
 
 document.getElementById('appVersion').textContent = 'v' + APP_VERSION;
 

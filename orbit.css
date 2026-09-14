@@ -208,9 +208,12 @@ svg .span-label { fill: var(--span-edge); letter-spacing: .08em; }
 .dangerbtn:hover { background: hsl(0 50% 20% / .4); }
 
 /* ── modal ───────────────────────────────────────────────────────── */
-#modalWrap { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 18px; }
-#modalWrap[hidden], #popover[hidden] { display: none; }
-#modalScrim { position: absolute; inset: 0; background: hsl(250 45% 3% / .7); }
+#modalWrap, #askWrap { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 18px; }
+#modalWrap[hidden], #askWrap[hidden], #popover[hidden] { display: none; }
+#modalScrim, #askScrim { position: absolute; inset: 0; background: hsl(250 45% 3% / .7); }
+#askWrap { z-index: 70; }
+#ask { position: relative; width: min(440px, 100%); padding: 18px; box-sizing: border-box; }
+#ask p { margin: 0; font-size: 13px; color: var(--ink); line-height: 1.5; }
 #modal {
   position: relative; width: min(660px, 100%); max-height: 86vh;
   display: flex; flex-direction: column; padding: 18px; box-sizing: border-box;
