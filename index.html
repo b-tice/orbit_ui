@@ -17,7 +17,6 @@
     <span class="amb-led" id="powerLed"></span>
     <h1>ORBIT<span>·UI</span></h1>
     <span class="version" id="appVersion"></span>
-    <span class="tagline">Setup editor — concept demo</span>
   </div>
   <div class="programbar">
     <label class="field" title="Receive Channel — the channel Orbit listens on for program changes and bank selects. Separate from the transmit channel set on each zone.">
@@ -32,11 +31,13 @@
       <span>SETUP</span>
       <input id="progName" type="text" maxlength="10" value="INIT" autocapitalize="characters" spellcheck="false">
     </label>
-    <button class="amb-button ambx-press-sm" id="saveBtn" type="button" title="review and save this Setup to the Library">
-      <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Save</span>
-    </button>
   </div>
 </header>
+
+<nav class="out-tabs" aria-label="output">
+  <button class="out-tab ot-midi on" data-tab="midi" type="button" title="zones that send MIDI"><span class="ot-dot"></span>MIDI</button>
+  <button class="out-tab ot-analog" data-tab="analog" type="button" title="zones that drive the two EXP jacks"><span class="ot-dot"></span>ANALOG OUT</button>
+</nav>
 
 <main id="axes"></main>
 
@@ -44,8 +45,7 @@
   <section class="librarian ambient amb-surface amb-chamfer amb-elevation-2 ambx-panel amb-mat-blasted amb-rounded-xl">
     <div class="lib-col">
       <div class="lib-head">
-        <h2>LIBRARY</h2>
-        <span class="lib-note">tap to load · drag into the set list</span>
+        <h2 id="libTitle">LIBRARY</h2>
         <button class="ghostbtn" id="saveNewBtn" type="button" title="save the current settings as a new Setup">+ new</button>
       </div>
       <ul class="lib-list" id="libList"></ul>
@@ -53,7 +53,6 @@
     <div class="lib-col">
       <div class="lib-head">
         <h2>SET LIST</h2>
-        <span class="lib-note">position = program change #</span>
       </div>
       <ul class="lib-list" id="setList"></ul>
       <div class="midi-in">
@@ -68,42 +67,15 @@
 </div>
 
 <footer class="hints">
-  <p>
-    <b>double&#8209;click / double&#8209;tap</b> inside a controller zone to add a curve point &nbsp;·&nbsp;
-    <b>tap</b> a zone, point, or CH·CC chip to configure &nbsp;·&nbsp;
-    <b>drag</b> a zone's end points to resize it, its body to move it &nbsp;·&nbsp;
-    <b>+ Zone</b> adds a zone on top — zones may overlap &nbsp;·&nbsp;
-    <b>drag</b> the ▲ marker to simulate the pedal (flick it fast into a ⚡ zone)
-  </p>
-  <button class="ghostbtn" id="resetBtn" type="button">reset demo</button>
+  <span class="foot-tools">
+    <button class="ghostbtn" id="exportBtn" type="button" title="save both libraries, the set list and the receive channel to a .json file">export file</button>
+    <button class="ghostbtn" id="importBtn" type="button" title="restore libraries and set list from a .json file made by export">import file</button>
+    <input id="importFile" type="file" accept="application/json,.json" hidden>
+    <button class="ghostbtn" id="resetBtn" type="button">reset demo</button>
+  </span>
 </footer>
 
 <div id="popover" class="ambient amb-surface amb-chamfer amb-elevation-3 amb-mat-blasted amb-rounded-lg" hidden></div>
-
-<div id="modalWrap" hidden>
-  <div id="modalScrim"></div>
-  <div id="modal" class="ambient amb-surface amb-chamfer amb-elevation-3 amb-mat-blasted amb-rounded-xl">
-    <div class="modal-head">
-      <h2 id="modalTitle">SAVE SETUP</h2>
-      <div class="modal-tabs">
-        <button class="ghostbtn tab on" data-fmt="text" type="button">TEXT</button>
-        <button class="ghostbtn tab" data-fmt="json" type="button">JSON</button>
-      </div>
-    </div>
-    <pre id="modalPre"></pre>
-    <div class="modal-foot">
-      <button class="amb-button ambx-press-sm" id="copyBtn" type="button">
-        <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Copy</span>
-      </button>
-      <button class="amb-button ambx-press-sm" id="cancelBtn" type="button">
-        <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Cancel</span>
-      </button>
-      <button class="amb-button ambx-press-sm" id="confirmSaveBtn" type="button">
-        <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Save</span>
-      </button>
-    </div>
-  </div>
-</div>
 
 <div id="askWrap" hidden>
   <div id="askScrim"></div>

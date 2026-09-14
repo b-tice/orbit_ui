@@ -6,12 +6,17 @@
    Controller zones own their transmit channel, CC number and their own
    response curve (points; the first/last points are the zone's end points).
    Dead zones are a MASK: they silence any Controller zone they overlap.
-   Travel with no zone at all is dead too. */
+   Travel with no zone at all is dead too.
+   v1.9: OUTPUT TABS. Each axis carries one zone set per output — MIDI and
+   Analog Out — sharing the same editor; only what a zone drives differs.
+   The Library is per output too (a MIDI Setup, an Analog Setup; Ground
+   Control later), and a Set List slot holds one Setup per output, recalled
+   together by one program change. */
 
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.8';
+const APP_VERSION = '1.9';
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -44,6 +49,34 @@ const PALETTE = [
 ];
 const colorOf = z => PALETTE[(z.color || 0) % PALETTE.length];
 
+/* ── output tabs ─────────────────────────────────────────────────── */
+
+const VOLTS = 5;                                  /* EXP jack full scale */
+const toV = v => v / 127 * VOLTS;
+const fromV = volts => volts / VOLTS * 127;
+const OUTPUTS = {
+  midi: {
+    key: 'midi', label: 'MIDI', tag: 'MIDI', chips: true,
+    types: ['ctl', 'note', 'switch', 'dead', 'freeze'],
+    gridLabel: v => String(v),
+    valLabel: v => String(Math.round(v)),
+  },
+  analog: {
+    key: 'analog', label: 'ANALOG OUT', tag: 'EXP',
+    types: ['ctl', 'switch', 'dead'],             /* a voltage has no notes and nothing to freeze */
+    chips: false,                                  /* one jack per axis: no CH·CC-style chips */
+    gridLabel: v => toV(v).toFixed(1) + 'V',
+    valLabel: v => toV(v).toFixed(2) + 'V',
+  },
+};
+const TAB_ORDER = ['midi', 'analog'];
+const OUT = () => OUTPUTS[state.tab];
+/* the EXP jack an axis drives is fixed by the hardware: pitch → EXP 1, yaw → EXP 2 */
+const jackOf = axis => (axis.key === 'pitch' ? 1 : 2);
+/* the active tab's zones of an axis */
+const Z = axis => axis.outputs[state.tab].zones;
+const setZ = (axis, zones) => { axis.outputs[state.tab].zones = zones; };
+
 /* ── zone factory ────────────────────────────────────────────────── */
 
 /* Every zone carries the fields of every type, so switching a zone's type
@@ -51,7 +84,7 @@ const colorOf = z => PALETTE[(z.color || 0) % PALETTE.length];
 function mkZone(type, lo, hi, extra) {
   return Object.assign({
     id: uid(), type, lo, hi, color: 0,
-    /* controller */
+    /* controller (MIDI: channel + CC · analog: the axis's own jack) */
     ch: 1, cc: 1, smooth: false,
     points: [{ x: lo, y: 0 }, { x: hi, y: 127 }],
     /* note + switch */
@@ -64,50 +97,101 @@ function mkZone(type, lo, hi, extra) {
 /* the least-used palette color among this axis's colored (non-dead) zones */
 function nextColor(axis) {
   const counts = PALETTE.map(() => 0);
-  for (const z of axis.zones) if (z.type !== 'dead') counts[(z.color || 0) % PALETTE.length]++;
+  for (const z of Z(axis)) if (z.type !== 'dead') counts[(z.color || 0) % PALETTE.length]++;
   let best = 0;
   for (let i = 1; i < counts.length; i++) if (counts[i] < counts[best]) best = i;
   return best;
 }
 
-/* David's defaults: Yaw = Dead · CTL · Dead · CTL · Dead (bipolar Mid=Hi),
-   Pitch = Dead · CTL · Dead. */
+/* Defaults: the classic layout — Yaw = two Controller zones (the bipolar
+   Mid=Hi example, left 0→127, right 127→0) with padding at the ends and a
+   gap at center; Pitch = one Controller with padding at heel and toe. The
+   padding is EMPTY travel (dead by absence), not Dead zones. */
 function defaultZones(key) {
   if (key === 'yaw') return [
-    mkZone('dead', 0.00, 0.08),
     mkZone('ctl', 0.08, 0.46, { color: 0, ch: 1, cc: 11,
       points: [{ x: 0.08, y: 0 }, { x: 0.27, y: 70 }, { x: 0.46, y: 127 }] }),
-    mkZone('dead', 0.46, 0.54),
     mkZone('ctl', 0.54, 0.92, { color: 1, ch: 1, cc: 11,
       points: [{ x: 0.54, y: 127 }, { x: 0.73, y: 70 }, { x: 0.92, y: 0 }] }),
-    mkZone('dead', 0.92, 1.00),
   ];
   return [
-    mkZone('dead', 0.00, 0.06),
     mkZone('ctl', 0.06, 0.94, { color: 0, ch: 1, cc: 1,
       points: [{ x: 0.06, y: 0 }, { x: 0.5, y: 50 }, { x: 0.94, y: 127 }] }),
-    mkZone('dead', 0.94, 1.00),
   ];
 }
 
+/* The Analog tab starts as a MIRROR of the MIDI zones and diverges only
+   when edited: Controller curves map 0–127 → 0–5 V unchanged; every other
+   zone (Note, Freeze, Switch, Dead) becomes a Dead zone of the same range,
+   so the voltage's dead spots line up with the MIDI ones. */
+function mirrorToAnalog(zones) {
+  return zones.map(z => {
+    const c = JSON.parse(JSON.stringify(z));
+    c.id = uid();
+    if (c.type !== 'ctl') c.type = 'dead';
+    return c;
+  });
+}
+const defaultAnalogZones = key => mirrorToAnalog(defaultZones(key));
+/* the other direction: every analog zone type is a valid MIDI zone */
+function mirrorToMidi(zones) {
+  return zones.map(z => { const c = JSON.parse(JSON.stringify(z)); c.id = uid(); return c; });
+}
+const mirrorZones = (zones, toTab) => (toTab === 'analog' ? mirrorToAnalog(zones) : mirrorToMidi(zones));
+
+/* A Set List slot always holds one Setup per output. Whenever a slot has a
+   file for one output and none for another, create the missing one as a
+   mirror (same name) so the slot recalls something sensible everywhere.
+   Works on a raw state object so migration can use it too. */
+function fillSlots(st) {
+  for (const sl of st.setlist) {
+    const src = TAB_ORDER.find(t => sl[t] && st.library[t].find(f => f.id === sl[t]));
+    if (!src) continue;
+    const from = st.library[src].find(f => f.id === sl[src]);
+    for (const tab of TAB_ORDER) {
+      if (sl[tab] && st.library[tab].find(f => f.id === sl[tab])) continue;
+      const nf = mkFile(from.name, { yaw: mirrorZones(from.axes.yaw, tab), pitch: mirrorZones(from.axes.pitch, tab) });
+      st.library[tab].push(nf);
+      sl[tab] = nf.id;
+    }
+  }
+}
+/* the pre-mirror analog default (one full-span 0→5 V ramp) — used to spot
+   untouched analog files from earlier builds so they can be re-mirrored */
+function isPlainRamp(zones) {
+  if (!zones || zones.length !== 1) return false;
+  const z = zones[0];
+  return z.type === 'ctl' && z.lo === 0 && z.hi === 1 && z.points.length === 2
+    && z.points[0].y === 0 && z.points[1].y === 127;
+}
+const defaultOutputs = key => ({
+  midi:   { zones: defaultZones(key) },
+  analog: { zones: defaultAnalogZones(key) },
+});
+
+/* one library file: the zones of both axes for ONE output */
+const mkFile = (name, axesZones) => ({ id: uid(), name, axes: JSON.parse(JSON.stringify(axesZones)) });
+const emptySlot = () => ({ midi: null, analog: null });
+
 function defaultState() {
   return {
-    program: { num: 1, name: 'INIT' },
+    tab: 'midi',
+    names: { midi: 'INIT', analog: 'INIT' },    /* SETUP field, per output tab */
+    loaded: { midi: null, analog: null },        /* library file id per output tab */
     axes: {
       yaw: {
         key: 'yaw', label: 'YAW', sub: 'left → right',
         endLabels: ['LEFT', 'RIGHT'], freeze: 'PITCH',
-        sim: 0.5, zones: defaultZones('yaw'),
+        sim: 0.5, outputs: defaultOutputs('yaw'),
       },
       pitch: {
         key: 'pitch', label: 'PITCH', sub: 'heel → toe',
         endLabels: ['HEEL', 'TOE'], freeze: 'YAW',
-        sim: 0.35, zones: defaultZones('pitch'),
+        sim: 0.35, outputs: defaultOutputs('pitch'),
       },
     },
-    library: [],
-    setlist: [],
-    loadedId: null,
+    library: { midi: [], analog: [] },
+    setlist: [],                                 /* [{midi: fileId|null, analog: fileId|null}] */
     globalCh: 16, /* receive channel for incoming MIDI (or 'omni') */
   };
 }
@@ -147,11 +231,16 @@ function layerToZones(ly, color) {
   return zones;
 }
 
-/* in place: give every axis a zones[] (idempotent) */
+/* in place: give every axis outputs.{midi,analog}.zones (idempotent) */
 function migrateAxes(axes, layerOn) {
   for (const key of ['yaw', 'pitch']) {
     const a = axes[key];
-    if (a.zones) continue;
+    if (a.outputs) continue;
+    if (a.zones) {           /* v1.8: a single zone set = the MIDI tab */
+      a.outputs = { midi: { zones: a.zones }, analog: { zones: defaultAnalogZones(key) } };
+      delete a.zones;
+      continue;
+    }
     let zones = [];
     if (a.layers) {
       a.layers.forEach((ly, li) => {
@@ -163,10 +252,62 @@ function migrateAxes(axes, layerOn) {
     } else {
       zones = defaultZones(key);
     }
-    a.zones = zones;
+    a.outputs = { midi: { zones }, analog: { zones: defaultAnalogZones(key) } };
     delete a.layers; delete a.points; delete a.spans; delete a.regions; delete a.smooth; delete a.baseCC;
   }
   return axes;
+}
+
+/* v1.2–v1.9 kept ONE library of whole Setups and a Set List of their ids.
+   Split each into a MIDI file and an Analog file; the Set List slots keep
+   both, so nothing the user arranged is lost. */
+function migrateLibrary(s) {
+  if (Array.isArray(s.library)) {
+    const lib = { midi: [], analog: [] };
+    const map = {};
+    for (const en of s.library) {
+      if (!en.axes) continue;
+      migrateAxes(en.axes, en.layerOn);
+      const m = mkFile(en.name, { yaw: en.axes.yaw.outputs.midi.zones, pitch: en.axes.pitch.outputs.midi.zones });
+      const an = {};
+      for (const k of ['yaw', 'pitch']) {
+        const az = en.axes[k].outputs.analog.zones;
+        an[k] = isPlainRamp(az) ? mirrorToAnalog(en.axes[k].outputs.midi.zones) : az;
+      }
+      const a = mkFile(en.name, an);
+      lib.midi.push(m); lib.analog.push(a);
+      map[en.id] = { midi: m.id, analog: a.id };
+    }
+    s.setlist = (s.setlist || []).map(id => (map[id] ? { ...map[id] } : null)).filter(Boolean);
+    s.loaded = s.loadedId && map[s.loadedId] ? { ...map[s.loadedId] } : { midi: null, analog: null };
+    const nm = (s.program && s.program.name) || 'INIT';
+    s.names = { midi: nm, analog: nm };
+    s.library = lib;
+    delete s.loadedId; delete s.program;
+  }
+  s.library = s.library || { midi: [], analog: [] };
+  s.library.midi = s.library.midi || [];
+  s.library.analog = s.library.analog || [];
+  s.setlist = (s.setlist || []).map(sl => (typeof sl === 'object' && sl ? { midi: sl.midi || null, analog: sl.analog || null } : null)).filter(Boolean);
+  s.loaded = s.loaded || { midi: null, analog: null };
+  s.names = s.names || { midi: 'INIT', analog: 'INIT' };
+  if (!s.analogMirrored) {
+    for (const sl of s.setlist) {
+      const m = sl.midi && s.library.midi.find(f => f.id === sl.midi);
+      const a = sl.analog && s.library.analog.find(f => f.id === sl.analog);
+      if (!m || !a) continue;
+      for (const k of ['yaw', 'pitch']) if (isPlainRamp(a.axes[k])) a.axes[k] = mirrorToAnalog(m.axes[k]);
+    }
+    for (const k of ['yaw', 'pitch']) {
+      const ax = s.axes[k];
+      if (isPlainRamp(ax.outputs.analog.zones)) {
+        const a = s.loaded.analog && s.library.analog.find(f => f.id === s.loaded.analog);
+        ax.outputs.analog.zones = a ? JSON.parse(JSON.stringify(a.axes[k])) : mirrorToAnalog(ax.outputs.midi.zones);
+      }
+    }
+    s.analogMirrored = true;
+  }
+  fillSlots(s);
 }
 
 let state = loadState();
@@ -177,12 +318,10 @@ function loadState() {
     if (raw) {
       const s = JSON.parse(raw);
       if (s && s.axes && s.axes.yaw && s.axes.pitch) {
-        s.library = s.library || [];
-        s.setlist = s.setlist || [];
-        if (s.loadedId === undefined) s.loadedId = null;
         if (s.globalCh === undefined) s.globalCh = 16;
+        if (!OUTPUTS[s.tab]) s.tab = 'midi';
         migrateAxes(s.axes, s.layerOn);
-        for (const en of s.library) if (en.axes) migrateAxes(en.axes, en.layerOn);
+        migrateLibrary(s);
         delete s.activeLayer; delete s.layerOn;
         return s;
       }
@@ -203,26 +342,29 @@ const width = z => z.hi - z.lo;
    on top and wins the tap. A Controller hidden under another is always
    reachable through its CH·CC chip. */
 const rank = z => (z.type === 'ctl' ? 0 : 1);
-const drawOrder = axis => [...axis.zones].sort((a, b) => rank(a) - rank(b) || width(b) - width(a));
-const zoneById = (axis, id) => axis.zones.find(z => z.id === id) || null;
-const zonesAt = (axis, t) => axis.zones.filter(z => t >= z.lo - 1e-9 && t <= z.hi + 1e-9);
+const orderZones = zs => [...zs].sort((a, b) => rank(a) - rank(b) || width(b) - width(a));
+const drawOrder = axis => orderZones(Z(axis));
+const zoneById = (axis, id) => Z(axis).find(z => z.id === id) || null;
+const zonesAt = (axis, t) => Z(axis).filter(z => t >= z.lo - 1e-9 && t <= z.hi + 1e-9);
 /* Two overlapping Controller zones normally both send. If they share the
    same transmit channel AND CC they would fight over one controller, so
    the topmost (narrowest) one wins in the overlap and the other goes quiet. */
-const sameCC = (a, b) => a.type === 'ctl' && b.type === 'ctl' && a.ch === b.ch && a.cc === b.cc;
+/* same target: MIDI = same channel + CC · analog = same jack */
+const sameCC = (a, b) => a.type === 'ctl' && b.type === 'ctl'
+  && (state.tab === 'analog' || (a.ch === b.ch && a.cc === b.cc));
 const overlaps = (a, b) => a.hi > b.lo && a.lo < b.hi;
 function isAbove(axis, a, b) {           /* is a drawn on top of b? */
   const o = drawOrder(axis);
   return o.indexOf(a) > o.indexOf(b);
 }
 /* zones that silence z: every non-Controller zone, plus same-CC Controllers above it */
-const blockers = (axis, z) => axis.zones.filter(o =>
+const blockers = (axis, z) => Z(axis).filter(o =>
   o !== z && overlaps(o, z) && (o.type !== 'ctl' || (sameCC(o, z) && isAbove(axis, o, z))));
 /* is Controller zone z actually sending at travel t? */
 const ctlActive = (axis, z, t) =>
   t >= z.lo && t <= z.hi && !blockers(axis, z).some(o => t >= o.lo && t <= o.hi);
 /* does z share channel+CC with another Controller it overlaps? (shown amber) */
-const ccConflict = (axis, z) => axis.zones.some(o => o !== z && overlaps(o, z) && sameCC(o, z));
+const ccConflict = (axis, z) => Z(axis).some(o => o !== z && overlaps(o, z) && sameCC(o, z));
 /* the parts of [z.lo,z.hi] where z is silenced, merged & sorted */
 function blockedRanges(axis, z) {
   const iv = blockers(axis, z)
@@ -239,7 +381,7 @@ function blockedRanges(axis, z) {
 function ctlAt(axis, t) {
   const c = zonesAt(axis, t).filter(z => z.type === 'ctl');
   if (!c.length) return null;
-  const order = drawOrder({ zones: c });   /* last drawn = on top */
+  const order = orderZones(c);   /* last drawn = on top */
   return order[order.length - 1];
 }
 
@@ -324,23 +466,30 @@ function clampi(v, lo, hi) {
 /* ── zone labels ─────────────────────────────────────────────────── */
 
 function zoneShortLabel(axis, z) {
+  const analog = state.tab === 'analog';
   if (z.type === 'dead') return 'DEAD';
   if (z.type === 'freeze') return 'FRZ ' + axis.freeze;
   if (z.type === 'note') return '♪ ' + noteName(z.note) + ' ch' + z.ch;
-  if (z.type === 'switch') return '⚡ ' + (z.action === 'cc' ? 'CC' + z.cc : noteName(z.note)) + ' ch' + z.ch;
-  return `CH${z.ch} · CC${z.cc}`;
+  if (z.type === 'switch') {
+    if (analog) return `⚡ ${toV(z.offVal).toFixed(1)}/${toV(z.onVal).toFixed(1)}V`;
+    return '⚡ ' + (z.action === 'cc' ? 'CC' + z.cc : noteName(z.note)) + ' ch' + z.ch;
+  }
+  return analog ? 'CV' : `CH${z.ch} · CC${z.cc}`;
 }
 
 /* what a zone does at the sim marker (null = nothing) */
 function zoneOutput(axis, z, t) {
+  const analog = state.tab === 'analog';
   if (z.type === 'ctl') {
     if (!ctlActive(axis, z, t)) return null;
-    return `CC${z.cc} ch${z.ch}=${Math.round(curveValue(z, t))}`;
+    const v = curveValue(z, t);
+    return analog ? `${toV(v).toFixed(2)}V` : `CC${z.cc} ch${z.ch}=${Math.round(v)}`;
   }
   if (z.type === 'freeze') return `FRZ ${axis.freeze}`;
   if (z.type === 'note') return `♪${noteName(z.note)} ch${z.ch} v${z.vel}`;
   if (z.type === 'switch') {
     const on = !!simSwitch[z.id];
+    if (analog) return `⚡${on ? toV(z.onVal).toFixed(1) : toV(z.offVal).toFixed(1)}V`;
     return `⚡${z.action === 'cc' ? 'CC' + z.cc : noteName(z.note)} ${on ? 'ON' : 'off'}`;
   }
   return null;
@@ -351,7 +500,7 @@ const simSwitch = {};
 
 /* ── geometry / rendering ────────────────────────────────────────── */
 
-const GEO = { left: 40, right: 14, bottom: 44, height: 240, chipRow: 19 };
+const GEO = { left: 44, right: 14, bottom: 44, height: 240, chipRow: 19 };
 const editors = {}; // key -> {svg, outEl}
 
 function buildPanels() {
@@ -366,13 +515,18 @@ function buildPanels() {
         <div class="axis-title"><b>${axis.label}</b><small>${axis.sub}</small></div>
         <div class="axis-out"><span class="amb-led"></span><span data-out></span></div>
         <div class="axis-tools">
+          <button class="ghostbtn savebtn" data-save type="button" title="save this tab's Setup to its Library (lights up when this axis has unsaved changes)">save</button>
           <button class="ghostbtn" data-addzone type="button" title="add a zone — pick its type in the popover">+ Zone</button>
         </div>
       </div>
       <div class="editor-well"><svg data-axis="${key}"></svg></div>`;
     main.appendChild(panel);
     const svg = panel.querySelector('svg');
-    editors[key] = { svg, outEl: panel.querySelector('[data-out]') };
+    editors[key] = { svg, outEl: panel.querySelector('[data-out]'), saveBtn: panel.querySelector('[data-save]') };
+    editors[key].saveBtn.addEventListener('click', () => {
+      saveProgram(false);
+      flashProgName();
+    });
     panel.querySelector('[data-addzone]').addEventListener('click', e => addZone(axis, e.clientX, e.clientY));
     wireEditor(svg, axis);
   }
@@ -381,7 +535,7 @@ function buildPanels() {
 /* chips for Controller zones sit above the strip; overlapping zones get
    their chips on separate rows so nothing collides */
 function chipLayout(axis, g) {
-  const ctl = axis.zones.filter(z => z.type === 'ctl').sort((a, b) => a.lo - b.lo);
+  const ctl = OUT().chips ? Z(axis).filter(z => z.type === 'ctl').sort((a, b) => a.lo - b.lo) : [];
   const rows = [];
   const chips = ctl.map(z => {
     const label = zoneShortLabel(axis, z);
@@ -427,10 +581,10 @@ function render(axis) {
   </defs>`);
 
   /* value gridlines + labels */
-  for (const v of [0, 64, 127]) {
+  for (const v of [0, 63.5, 127]) {
     const y = g.ty(v);
     parts.push(`<line x1="${g.x0}" y1="${y}" x2="${g.x1}" y2="${y}" stroke="var(--well-line)" stroke-dasharray="2 5"/>`);
-    parts.push(`<text x="${g.x0 - 8}" y="${y + 3}" font-size="9" text-anchor="end">${v}</text>`);
+    parts.push(`<text x="${g.x0 - 8}" y="${y + 3}" font-size="9" text-anchor="end">${OUT().gridLabel(v === 63.5 ? 64 : v)}</text>`);
   }
   /* travel ticks */
   for (const t of [0, 0.25, 0.5, 0.75, 1]) {
@@ -519,7 +673,7 @@ function render(axis) {
   /* sim marker */
   const sx = g.tx(axis.sim);
   parts.push(`<line x1="${sx}" y1="${g.y0}" x2="${sx}" y2="${g.y1 + 8}" stroke="var(--sim)" stroke-width="1" opacity="0.65" pointer-events="none"/>`);
-  for (const z of axis.zones) {
+  for (const z of Z(axis)) {
     if (z.type !== 'ctl' || !ctlActive(axis, z, axis.sim)) continue;
     const sy = g.ty(curveValue(z, axis.sim));
     parts.push(`<circle cx="${sx}" cy="${sy}" r="3.5" fill="var(--sim)" filter="url(#glow-sim-${axis.key})" pointer-events="none"/>`);
@@ -541,9 +695,26 @@ function render(axis) {
 }
 
 function commit(axis) {
-  for (const z of axis.zones) if (z.type === 'ctl') normalizePoints(z);
+  for (const z of Z(axis)) if (z.type === 'ctl') normalizePoints(z);
   render(axis);
   saveState();
+  updateSaveButtons();
+}
+
+/* an axis's Save lights when its zones (or the Setup name) differ from the
+   tab's loaded file — or when nothing is loaded yet, so the work gets saved */
+function axisDirty(axis) {
+  const tab = state.tab;
+  const f = state.loaded[tab] ? libFile(state.loaded[tab], tab) : null;
+  if (!f) return true;
+  const name = (state.names[tab] || 'UNTITLED').toUpperCase().slice(0, 10);
+  return name !== f.name || JSON.stringify(Z(axis)) !== JSON.stringify(f.axes[axis.key]);
+}
+function updateSaveButtons() {
+  for (const key of ['yaw', 'pitch']) {
+    const ed = editors[key];
+    if (ed && ed.saveBtn) ed.saveBtn.classList.toggle('on', axisDirty(state.axes[key]));
+  }
 }
 
 /* ── interactions ────────────────────────────────────────────────── */
@@ -661,7 +832,7 @@ function simMove(axis, t, track) {
   const now = performance.now();
   const dt = (now - track.time) / 1000;
   const speed = dt > 0 ? Math.abs(t - track.t) * 100 / dt : 0;   /* % of travel per second */
-  for (const z of axis.zones) {
+  for (const z of Z(axis)) {
     if (z.type !== 'switch') continue;
     const wasIn = track.t >= z.lo && track.t <= z.hi;
     const nowIn = t >= z.lo && t <= z.hi;
@@ -686,12 +857,12 @@ function addPointAt(axis, px, py) {
    color; its popover opens so the type can be picked right away */
 function addZone(axis, cx, cy) {
   const z = mkZone('ctl', 0.33, 0.67, { color: nextColor(axis), ch: 1, cc: nextCC(axis) });
-  axis.zones.push(z);
+  Z(axis).push(z);
   commit(axis);
   openZonePopover(axis, z, cx, cy);
 }
 function nextCC(axis) {
-  const used = new Set(axis.zones.filter(z => z.type === 'ctl').map(z => z.cc));
+  const used = new Set(Z(axis).filter(z => z.type === 'ctl').map(z => z.cc));
   let cc = 1;
   while (used.has(cc)) cc++;
   return Math.min(cc, 127);
@@ -746,24 +917,26 @@ function openPointPopover(axis, zid, idx, cx, cy) {
   if (!p) return;
   const end = isEndPoint(z, p);
   const col = colorOf(z);
+  const analog = state.tab === 'analog';
   openPopover(`
     <h3><span class="amb-led" style="--amb-led-color:${col.c}"></span>${end ? 'End point' : 'Point'}
-      <span class="pop-note">CH${z.ch} · CC${z.cc}</span></h3>
+      <span class="pop-note">${state.tab === 'analog' ? 'EXP ' + jackOf(axis) : zoneShortLabel(axis, z)}</span></h3>
     <div class="pop-rows">
       ${numRow('Travel %', 'ppx', (p.x * 100).toFixed(1), 0, 100, end ? 'readonly' : '')}
-      ${numRow('Value', 'ppy', Math.round(p.y), 0, 127)}
+      ${analog ? numRow('Volts', 'ppy', toV(p.y).toFixed(2), 0, VOLTS, 'step="0.01"') : numRow('Value', 'ppy', Math.round(p.y), 0, 127)}
       ${end ? '<div class="pop-note">end points follow the zone\'s edges — drag the edge to move it</div>'
             : '<button class="dangerbtn" id="pdel" type="button">delete point</button>'}
     </div>`, cx, cy);
   if (!end) wireNum(axis, 'ppx', v => { p.x = Math.max(z.lo, Math.min(z.hi, v / 100)); });
-  wireNum(axis, 'ppy', v => { p.y = clampi(v, 0, 127); });
+  wireNum(axis, 'ppy', v => { p.y = analog ? Math.max(0, Math.min(127, fromV(v))) : clampi(v, 0, 127); });
   const del = pop.querySelector('#pdel');
   if (del) del.addEventListener('click', () => { z.points.splice(idx, 1); closePopover(); commit(axis); });
 }
 
 function openZonePopover(axis, z, cx, cy) {
   const col = colorOf(z);
-  const typeOrder = ['ctl', 'note', 'switch', 'dead', 'freeze'];   /* Freeze last: it gets the full-width button */
+  const analog = state.tab === 'analog';
+  const typeOrder = ['ctl', 'note', 'switch', 'dead', 'freeze'].filter(t => OUT().types.includes(t));   /* Freeze last: full-width button */
   const typeBtns = typeOrder.map(zoneType).map(t => `
     <button class="type-btn ${t.id === 'freeze' ? 'wide' : ''} ${z.type === t.id ? 'on' : ''}" data-type="${t.id}" type="button" title="${t.label}">
       <span class="ico">${t.icon}</span>${t.id === 'freeze' ? 'Freeze ' + axis.freeze + ' value' : t.label}
@@ -774,18 +947,23 @@ function openZonePopover(axis, z, cx, cy) {
 
   let rows = '';
   if (z.type === 'ctl') {
-    rows = `${numRow('Transmit ch', 'zch', z.ch, 1, 16)}
-      ${numRow('CC #', 'zcc', z.cc, 0, 127)}
+    rows = `${analog ? '' : `${numRow('Transmit ch', 'zch', z.ch, 1, 16)}
+      ${numRow('CC #', 'zcc', z.cc, 0, 127)}`}
       <div class="pop-row"><label>Response curve</label>
         <button class="ghostbtn ${z.smooth ? 'on' : ''}" id="zsmooth" type="button" title="linear ↔ smooth (monotone cubic) interpolation between the points">smooth</button></div>
       <div class="pop-note">drag the end points to set the output range · double-click the curve to add points</div>
-      ${ccConflict(axis, z) ? '<div class="pop-note warn">overlaps another controller zone on the same channel + CC — where they overlap only the topmost (narrowest) one sends</div>' : ''}`;
+      ${ccConflict(axis, z) ? `<div class="pop-note warn">overlaps another controller zone${analog ? '' : ' on the same channel + CC'} — where they overlap only the topmost (narrowest) one sends</div>` : ''}`;
   } else if (z.type === 'note') {
     rows = `${numRow('Transmit ch', 'zch', z.ch, 1, 16)}
       ${numRow('Note #', 'znote', z.note, 0, 127)}
       <div class="pop-row"><label>Note</label><span class="pop-note" id="znName">${noteName(z.note)}</span></div>
       ${numRow('Velocity', 'zvel', z.vel, 1, 127)}
       <div class="pop-note">note on when the pedal enters the zone, note off when it leaves</div>`;
+  } else if (z.type === 'switch' && analog) {
+    rows = `${numRow('On volts', 'zonv', toV(z.onVal).toFixed(2), 0, VOLTS, 'step="0.01"')}
+      ${numRow('Off volts', 'zoffv', toV(z.offVal).toFixed(2), 0, VOLTS, 'step="0.01"')}
+      ${numRow('Speed %/s', 'zspeed', z.speed, 50, 1000)}
+      <div class="pop-note">a fast entry (faster than Speed) toggles the output between the two voltages · slow entry does nothing</div>`;
   } else if (z.type === 'switch') {
     rows = `<div class="pop-row"><label>Action</label>
         <div class="seg"><button class="${z.action !== 'cc' ? 'on' : ''}" data-action="note" type="button">Note</button><button class="${z.action === 'cc' ? 'on' : ''}" data-action="cc" type="button">CC</button></div></div>
@@ -804,11 +982,11 @@ function openZonePopover(axis, z, cx, cy) {
   }
 
   openPopover(`
-    <h3><span class="amb-led" style="--amb-led-color:${z.type === 'dead' ? '#6b7280' : col.c}"></span>${zoneType(z.type).icon} ${zoneType(z.type).label} zone</h3>
+    <h3><span class="amb-led" style="--amb-led-color:${z.type === 'dead' ? '#6b7280' : col.c}"></span>${zoneType(z.type).icon} ${zoneType(z.type).label} zone <span class="pop-tag">${OUT().tag}</span></h3>
     <div class="pop-rows">
       <div class="type-list">${typeBtns}</div>
       <div class="pop-row"><label>Range %</label>
-        <span class="pair"><input id="zlo" type="number" inputmode="numeric" value="${(z.lo * 100).toFixed(1)}" min="0" max="100">–<input id="zhi" type="number" inputmode="numeric" value="${(z.hi * 100).toFixed(1)}" min="0" max="100"></span></div>
+        <span class="pair"><input id="zlo" type="number" inputmode="decimal" step="0.5" value="${+(z.lo * 100).toFixed(1)}" min="0" max="100">–<input id="zhi" type="number" inputmode="decimal" step="0.5" value="${+(z.hi * 100).toFixed(1)}" min="0" max="100"></span></div>
       ${z.type === 'dead' ? '' : `<div class="pop-row"><label>Color</label><div class="swatches">${swatches}</div></div>`}
       <hr class="pop-sep">
       ${rows}
@@ -827,6 +1005,8 @@ function openZonePopover(axis, z, cx, cy) {
   pop.querySelectorAll('[data-action]').forEach(b => b.addEventListener('click', () => {
     z.action = b.dataset.action; commit(axis); reopen();
   }));
+  wireNum(axis, 'zonv', v => { z.onVal = Math.max(0, Math.min(127, fromV(v))); });
+  wireNum(axis, 'zoffv', v => { z.offVal = Math.max(0, Math.min(127, fromV(v))); });
   const setRange = (lo, hi) => {
     lo = Math.max(0, Math.min(1, lo)); hi = Math.max(0, Math.min(1, hi));
     if (hi - lo < MIN_ZONE) return;
@@ -849,114 +1029,119 @@ function openZonePopover(axis, z, cx, cy) {
   const sm = pop.querySelector('#zsmooth');
   if (sm) sm.addEventListener('click', () => { z.smooth = !z.smooth; sm.classList.toggle('on', z.smooth); commit(axis); });
   pop.querySelector('#zdel').addEventListener('click', () => {
-    axis.zones = axis.zones.filter(x => x.id !== z.id);
+    setZ(axis, Z(axis).filter(x => x.id !== z.id));
     delete simSwitch[z.id];
     closePopover();
     commit(axis);
   });
 }
 
-/* ── librarian: Setup library + drag-ordered Set List ────────────── */
+/* ── librarian: per-output Library + Set List of slots ───────────── */
 
 const libListEl = document.getElementById('libList');
 const setListEl = document.getElementById('setList');
+const libTitleEl = document.getElementById('libTitle');
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-function libEntry(id) { return state.library.find(x => x.id === id) || null; }
+const lib = tab => state.library[tab || state.tab];
+function libFile(id, tab) { return lib(tab).find(x => x.id === id) || null; }
+const curName = () => (state.names[state.tab] || 'UNTITLED').toUpperCase().slice(0, 10);
+const axesZones = tab => ({ yaw: state.axes.yaw.outputs[tab].zones, pitch: state.axes.pitch.outputs[tab].zones });
 
-/* the loaded Setup's 1-based Set List position (its PC number), or null */
+/* the current tab's loaded file's 1-based Set List position (its PC number), or null */
 function loadedPC() {
-  const i = state.setlist.indexOf(state.loadedId);
+  const id = state.loaded[state.tab];
+  const i = id ? state.setlist.findIndex(sl => sl[state.tab] === id) : -1;
   return i >= 0 ? i + 1 : null;
 }
-const snapshotAxes = () => JSON.parse(JSON.stringify(state.axes));
 
-function saveProgram(asNew) {
-  const name = (state.program.name || 'UNTITLED').toUpperCase().slice(0, 10);
-  let entry = !asNew && state.loadedId ? libEntry(state.loadedId) : null;
-  if (entry) {
-    entry.name = name;
-    entry.axes = snapshotAxes();
-    delete entry.layerOn;
+/* Save the CURRENT tab's zones as a file in that tab's library */
+function saveProgram(asNew, tab) {
+  tab = tab || state.tab;
+  const name = (state.names[tab] || 'UNTITLED').toUpperCase().slice(0, 10);
+  let f = !asNew && state.loaded[tab] ? libFile(state.loaded[tab], tab) : null;
+  if (f) {
+    f.name = name;
+    f.axes = JSON.parse(JSON.stringify(axesZones(tab)));
   } else {
-    entry = { id: uid(), name, axes: snapshotAxes() };
-    state.library.push(entry);
-    state.loadedId = entry.id;
+    f = mkFile(name, axesZones(tab));
+    lib(tab).push(f);
+    state.loaded[tab] = f.id;
   }
   saveState();
   renderLibrarian();
+  updateSaveButtons();
 }
 
-function loadProgram(id) {
-  const entry = libEntry(id);
-  if (!entry) return;
-  state.axes = migrateAxes(JSON.parse(JSON.stringify(entry.axes)), entry.layerOn);
-  state.program.name = entry.name;
-  state.loadedId = id;
-  progName.value = entry.name;
+/* load one file into its output tab (only that tab changes) */
+function loadFile(id, tab) {
+  const f = libFile(id, tab);
+  if (!f) return false;
+  for (const key of ['yaw', 'pitch']) state.axes[key].outputs[tab].zones = JSON.parse(JSON.stringify(f.axes[key]));
+  state.names[tab] = f.name;
+  state.loaded[tab] = id;
+  return true;
+}
+function refreshEditor() {
+  progName.value = state.names[state.tab];
   buildPanels();
   for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
   renderLibrarian();
 }
-
-function renderLibrarian() {
-  libListEl.innerHTML = state.library.length
-    ? state.library.map(en => `
-      <li class="lib-row${en.id === state.loadedId ? ' on' : ''}" data-id="${en.id}">
-        <span class="lib-name">${esc(en.name)}</span>
-        <button class="rowbtn" data-add type="button" title="append to the set list">+</button>
-        <button class="rowbtn" data-del type="button" title="delete (tap twice)">×</button>
-      </li>`).join('')
-    : '<li class="lib-empty">empty — SAVE stores the current Setup</li>';
-  setListEl.innerHTML = state.setlist.length
-    ? state.setlist.map((id, i) => {
-      const en = libEntry(id);
-      return `
-      <li class="set-row${id === state.loadedId ? ' on' : ''}" data-idx="${i}">
-        <span class="pc">${i + 1}</span>
-        <span class="lib-name">${en ? esc(en.name) : '?'}</span>
-        <span class="grip" title="drag to reorder">⠿</span>
-        <button class="rowbtn" data-del type="button" title="remove">×</button>
-      </li>`;
-    }).join('')
-    : '<li class="lib-empty">drag Setups here — order sets the PC #</li>';
-  progNum.value = loadedPC() ?? '—';
+/* load a Set List slot: every output that has a file (the pedal's PC behavior) */
+function loadSlot(i) {
+  const sl = state.setlist[i];
+  if (!sl) return;
+  for (const tab of TAB_ORDER) if (sl[tab]) loadFile(sl[tab], tab);
+  refreshEditor();
 }
 
-/* two-tap delete: first tap arms the button, second within 2.5s fires */
-function armDelete(target, fn) {
-  const btn = target.closest('button');
-  if (btn.dataset.armed) { fn(); return; }
-  btn.dataset.armed = '1';
-  btn.textContent = '✓';
-  setTimeout(() => {
-    if (btn.isConnected) { delete btn.dataset.armed; btn.textContent = '×'; }
-  }, 2500);
+function renderLibrarian() {
+  const tab = state.tab;
+  libTitleEl.textContent = `LIBRARY · ${tab === 'analog' ? 'ANALOG' : 'MIDI'}`;
+  libListEl.innerHTML = lib().length
+    ? lib().map(f => `
+      <li class="lib-row${f.id === state.loaded[tab] ? ' on' : ''}" data-id="${f.id}">
+        <span class="lib-name">${esc(f.name)}</span>
+        <button class="rowbtn" data-del type="button" title="delete this Setup">×</button>
+      </li>`).join('')
+    : `<li class="lib-empty">empty — SAVE stores the current ${OUT().label} Setup</li>`;
+  setListEl.innerHTML = state.setlist.length
+    ? state.setlist.map((sl, i) => {
+      const mine = sl[tab] ? libFile(sl[tab], tab) : null;
+      return `
+      <li class="set-row${mine && mine.id === state.loaded[tab] ? ' on' : ''}${mine ? '' : ' none'}" data-idx="${i}">
+        <span class="pc">${i + 1}</span>
+        <span class="lib-name">${mine ? esc(mine.name) : '— no ' + OUTPUTS[tab].tag + ' setup —'}</span>
+        <button class="rowbtn" data-del type="button" title="remove slot">×</button>
+      </li>`;
+    }).join('')
+    : `<li class="lib-empty">drag Setups here — order sets the PC #</li>`;
+  progNum.value = loadedPC() ?? '—';
 }
 
 libListEl.addEventListener('click', e => {
   const row = e.target.closest('.lib-row');
   if (!row) return;
   const id = row.dataset.id;
+  const tab = state.tab;
   if (e.target.closest('[data-del]')) {
-    armDelete(e.target, () => {
-      state.library = state.library.filter(x => x.id !== id);
-      state.setlist = state.setlist.filter(x => x !== id);
-      if (state.loadedId === id) state.loadedId = null;
-      saveState();
-      renderLibrarian();
-    });
-    return;
-  }
-  if (e.target.closest('[data-add]')) {
-    state.setlist.push(id);
+    const f = libFile(id, tab);
+    const used = state.setlist.filter(sl => sl[tab] === id).length;
+    if (!confirm(`Delete "${f ? f.name : '?'}" from the ${OUT().label} library?${used ? ` It is used by ${used} set list slot${used > 1 ? 's' : ''}.` : ''}`)) return;
+    state.library[tab] = lib().filter(x => x.id !== id);
+    for (const sl of state.setlist) if (sl[tab] === id) sl[tab] = null;
+    state.setlist = state.setlist.filter(sl => TAB_ORDER.some(t => sl[t]));   /* drop slots left empty */
+    fillSlots(state);   /* a slot that still has its other output gets a fresh mirror */
+    if (state.loaded[tab] === id) state.loaded[tab] = null;
     saveState();
     renderLibrarian();
+    updateSaveButtons();
     return;
   }
   if (e.target.closest('.grip')) return;
-  if (id === state.loadedId && !isDirty()) return;   /* already loaded, nothing to revert */
-  guardUnsaved('loading another Setup', () => loadProgram(id));
+  if (id === state.loaded[tab] && !isDirty(tab)) return;   /* already loaded, nothing to revert */
+  guardUnsaved('loading another Setup', () => { loadFile(id, tab); refreshEditor(); });
 });
 
 setListEl.addEventListener('click', e => {
@@ -970,12 +1155,14 @@ setListEl.addEventListener('click', e => {
     return;
   }
   if (e.target.closest('.grip')) return;
-  guardUnsaved('loading another Setup', () => loadProgram(state.setlist[idx]));
+  guardUnsaved('loading another slot', () => loadSlot(idx));
 });
 
 /* pointer-based row drag — grab anywhere on a bar (buttons excluded).
    A ~6px movement threshold separates a drag from a tap-to-load.
-   library → set list inserts · set list ↕ reorders · set list → library removes. */
+   library → set list: drop BETWEEN slots to insert a new slot holding this
+   Setup, drop ONTO a slot to put this Setup into that slot's tab.
+   set list ↕ reorders · set list → library removes the slot. */
 let swallowClick = false;
 document.addEventListener('click', e => {
   if (swallowClick) {
@@ -996,7 +1183,9 @@ function wireRowDrag(listEl, kind) {
     const r = row.getBoundingClientRect();
     const id = row.dataset.id;
     const oldIdx = row.dataset.idx != null ? +row.dataset.idx : -1;
-    let ghost = null, ph = null, active = false, overLib = false, dropIdx = 0;
+    let ghost = null, ph = null, active = false, overLib = false, dropIdx = 0, ontoIdx = -1;
+
+    const clearOnto = () => setListEl.querySelectorAll('.set-row.onto').forEach(x => x.classList.remove('onto'));
 
     const place = ev => {
       ghost.style.transform = `translate(${ev.clientX + 10}px, ${ev.clientY - r.height / 2}px)`;
@@ -1008,6 +1197,7 @@ function wireRowDrag(listEl, kind) {
       const rect = setListEl.getBoundingClientRect();
       const inSet = ev.clientX > rect.left - 24 && ev.clientX < rect.right + 24
                  && ev.clientY > rect.top - 12 && ev.clientY < rect.bottom + 24;
+      clearOnto(); ontoIdx = -1;
       if (!inSet || overLib) {
         active = false;
         if (ph.parentNode) ph.remove();
@@ -1017,6 +1207,14 @@ function wireRowDrag(listEl, kind) {
       let idx = rows.length;
       for (let i = 0; i < rows.length; i++) {
         const m = rows[i].getBoundingClientRect();
+        /* a library file dropped on the middle half of a slot goes INTO that slot */
+        if (kind === 'lib' && ev.clientY > m.top + m.height * 0.25 && ev.clientY < m.bottom - m.height * 0.25) {
+          ontoIdx = +rows[i].dataset.idx;
+          rows[i].classList.add('onto');
+          active = true;
+          if (ph.parentNode) ph.remove();
+          return;
+        }
         if (ev.clientY < m.top + m.height / 2) { idx = i; break; }
       }
       active = true;
@@ -1047,10 +1245,17 @@ function wireRowDrag(listEl, kind) {
       setTimeout(() => { swallowClick = false; }, 0);
       ghost.remove();
       if (ph.parentNode) ph.remove();
+      clearOnto();
       libListEl.classList.remove('drop-remove');
       if (active) {
         if (kind === 'lib') {
-          state.setlist.splice(dropIdx, 0, id);
+          if (ontoIdx >= 0) {
+            state.setlist[ontoIdx][state.tab] = id;
+          } else {
+            const sl = emptySlot(); sl[state.tab] = id;
+            state.setlist.splice(dropIdx, 0, sl);
+          }
+          fillSlots(state);
         } else {
           const [moved] = state.setlist.splice(oldIdx, 1);
           state.setlist.splice(dropIdx, 0, moved);
@@ -1069,26 +1274,31 @@ function wireRowDrag(listEl, kind) {
 wireRowDrag(libListEl, 'lib');
 wireRowDrag(setListEl, 'set');
 
-/* v1.6: Save and + new open the review modal first; the modal's Save commits. */
-document.getElementById('saveBtn').addEventListener('click', () => showSaveModal(false));
-document.getElementById('saveNewBtn').addEventListener('click', () => guardUnsaved('creating a new Setup', () => showSaveModal(true)));
+/* + new: save the current tab's zones as a NEW Setup under the SETUP name */
+document.getElementById('saveNewBtn').addEventListener('click', () => guardUnsaved('creating a new Setup', () => {
+  saveProgram(true);
+  flashProgName();
+}));
 
-/* ── v1.7: unsaved-changes guard ──────────────────────────────────
-   The loaded Setup is "dirty" when the editor differs from its Library
-   copy. Anything that would replace the editor contents goes through
-   guardUnsaved(): clean → proceed; dirty → Save / Discard / Cancel. */
-function isDirty() {
-  const en = state.loadedId ? libEntry(state.loadedId) : null;
-  if (!en) return false;
-  const name = (state.program.name || 'UNTITLED').toUpperCase().slice(0, 10);
-  return name !== en.name || JSON.stringify(state.axes) !== JSON.stringify(en.axes);
+/* ── v1.7: unsaved-changes guard (per output tab) ─────────────────
+   A tab is "dirty" when its editor differs from its loaded file. Anything
+   that would replace editor contents goes through guardUnsaved(): clean →
+   proceed; dirty → Save (every dirty tab) / Discard / Cancel. */
+function isDirty(tab) {
+  tab = tab || state.tab;
+  const f = state.loaded[tab] ? libFile(state.loaded[tab], tab) : null;
+  if (!f) return false;
+  const name = (state.names[tab] || 'UNTITLED').toUpperCase().slice(0, 10);
+  return name !== f.name || JSON.stringify(axesZones(tab)) !== JSON.stringify(f.axes);
 }
+const dirtyTabs = () => TAB_ORDER.filter(t => isDirty(t));
 const askWrap = document.getElementById('askWrap');
 let askThen = null;
 function guardUnsaved(what, then) {
-  if (!isDirty()) { then(); return; }
-  const en = libEntry(state.loadedId);
-  document.getElementById('askText').textContent = `"${en.name}" has unsaved changes. Save them before ${what}?`;
+  const d = dirtyTabs();
+  if (!d.length) { then(); return; }
+  const list = d.map(t => `${OUTPUTS[t].label} "${libFile(state.loaded[t], t).name}"`).join(' and ');
+  document.getElementById('askText').textContent = `${list} ${d.length > 1 ? 'have' : 'has'} unsaved changes. Save before ${what}?`;
   askThen = then;
   askWrap.hidden = false;
   document.getElementById('askSave').focus();
@@ -1099,7 +1309,7 @@ document.getElementById('askScrim').addEventListener('click', askClose);
 document.getElementById('askDiscard').addEventListener('click', () => { const t = askThen; askClose(); if (t) t(); });
 document.getElementById('askSave').addEventListener('click', () => {
   const t = askThen; askClose();
-  saveProgram(false);
+  for (const tab of dirtyTabs()) saveProgram(false, tab);
   flashProgName();
   if (t) t();
 });
@@ -1116,28 +1326,29 @@ globalChSel.addEventListener('change', () => {
   saveState();
 });
 
-/* the device rule: a PC on the receive channel selects that set list slot */
+/* the device rule: a PC on the receive channel recalls that slot — every output at once */
 function receiveProgramChange(ch, pc, force) {
   const gch = state.globalCh;
   if (gch !== 'omni' && ch !== gch) {
     return { ok: false, msg: `PC ${pc} ch${ch} — ignored (receive ch ${gch})` };
   }
-  const id = state.setlist[pc - 1];
-  if (!id || !libEntry(id)) {
+  const sl = state.setlist[pc - 1];
+  if (!sl) {
     return { ok: false, msg: `PC ${pc} ch${ch} — no set list slot ${pc}` };
   }
-  if (!force && isDirty()) {
+  if (!force && dirtyTabs().length) {
     /* ask first; on Save/Discard re-run with force so we don't ask twice */
     guardUnsaved(`switching to set list slot ${pc}`, () => showMiLog(receiveProgramChange(ch, pc, true)));
     return { ok: false, msg: `PC ${pc} ch${ch} — waiting: unsaved changes` };
   }
-  loadProgram(id);
+  loadSlot(pc - 1);
   const row = setListEl.querySelector(`.set-row[data-idx="${pc - 1}"]`);
   if (row) {
     row.classList.add('rx');
     row.addEventListener('animationend', () => row.classList.remove('rx'), { once: true });
   }
-  return { ok: true, msg: `PC ${pc} ch${ch} → loaded ${pc}·"${libEntry(id).name}"` };
+  const names = TAB_ORDER.map(t => sl[t] ? `${OUTPUTS[t].tag}:"${libFile(sl[t], t).name}"` : `${OUTPUTS[t].tag}:—`).join(' ');
+  return { ok: true, msg: `PC ${pc} ch${ch} → slot ${pc} · ${names}` };
 }
 
 const miCh = document.getElementById('miCh');
@@ -1153,107 +1364,6 @@ document.getElementById('miSend').addEventListener('click', () => {
   showMiLog(receiveProgramChange(+miCh.value, pc));
 });
 
-/* ── save review ─────────────────────────────────────────────────── */
-
-function zoneDetailText(axis, z) {
-  if (z.type === 'ctl') return `CTL     CH ${z.ch} · CC ${z.cc} · ${z.smooth ? 'smooth' : 'linear'}`;
-  if (z.type === 'note') return `NOTE    CH ${z.ch} · #${z.note} (${noteName(z.note)}) · vel ${z.vel} · on at entry, off at exit`;
-  if (z.type === 'switch') {
-    const what = z.action === 'cc' ? `CC ${z.cc} on ${z.onVal} / off ${z.offVal}` : `note #${z.note} (${noteName(z.note)}) vel ${z.vel}`;
-    return `SWITCH  CH ${z.ch} · ${what} · fast entry ≥ ${z.speed}%/s toggles`;
-  }
-  if (z.type === 'freeze') return `FREEZE  holds the ${axis.freeze} value`;
-  return 'DEAD    masks controller zones it overlaps';
-}
-
-function exportText() {
-  const p = state.program;
-  const lines = [];
-  const rule = '─'.repeat(52);
-  const pc = loadedPC();
-  lines.push(`ORBIT SETUP ${pc ? String(pc).padStart(3, '0') : '---'} · "${p.name}"`);
-  lines.push(`orbit ui v${APP_VERSION} · exported ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`);
-  lines.push(`receive channel: ${state.globalCh === 'omni' ? 'OMNI' : 'CH ' + state.globalCh}  (program changes → set list)`);
-  lines.push('');
-  for (const key of ['yaw', 'pitch']) {
-    const a = state.axes[key];
-    lines.push(`${a.label}  (${a.endLabels[0]} → ${a.endLabels[1]})`);
-    lines.push(rule);
-    for (const z of [...a.zones].sort((x, y) => x.lo - y.lo)) {
-      const range = `${pct(z.lo).padStart(6)} – ${pct(z.hi).padStart(6)}`;
-      const colr = z.type === 'dead' ? '' : ` [${colorOf(z).name}]`;
-      lines.push(`  ${range}  ${zoneDetailText(a, z)}${colr}`);
-      if (z.type === 'ctl') {
-        lines.push(`${' '.repeat(19)}curve  ${sortedPoints(z).map(pt => `${pct(pt.x)}→${Math.round(pt.y)}`).join(',  ')}`);
-      }
-    }
-    lines.push('');
-  }
-  if (state.setlist.length) {
-    lines.push('SET LIST  (1:1 program change map)');
-    lines.push(rule);
-    state.setlist.forEach((id, i) => {
-      const en = libEntry(id);
-      lines.push(`  PC ${String(i + 1).padStart(3)}  →  "${en ? en.name : '?'}"`);
-    });
-    lines.push('');
-  }
-  return lines.join('\n');
-}
-
-function exportJSON() {
-  const out = {
-    version: APP_VERSION,
-    receiveChannel: state.globalCh,
-    setup: { num: loadedPC(), name: state.program.name },
-    setlist: state.setlist.map((id, i) => {
-      const en = libEntry(id);
-      return { pc: i + 1, name: en ? en.name : '?' };
-    }),
-    axes: {},
-  };
-  for (const key of ['yaw', 'pitch']) {
-    const a = state.axes[key];
-    out.axes[key] = {
-      zones: [...a.zones].sort((x, y) => x.lo - y.lo).map(z => {
-        const base = { type: z.type, lo: +(z.lo.toFixed(4)), hi: +(z.hi.toFixed(4)) };
-        if (z.type !== 'dead') base.color = colorOf(z).name;
-        if (z.type === 'ctl') Object.assign(base, {
-          channel: z.ch, cc: z.cc, curveMode: z.smooth ? 'smooth' : 'linear',
-          points: sortedPoints(z).map(pt => ({ travel: +(pt.x.toFixed(4)), value: Math.round(pt.y) })),
-        });
-        if (z.type === 'note') Object.assign(base, { channel: z.ch, note: z.note, velocity: z.vel });
-        if (z.type === 'switch') Object.assign(base, {
-          channel: z.ch, action: z.action, speedPctPerSec: z.speed,
-          ...(z.action === 'cc' ? { cc: z.cc, onValue: z.onVal, offValue: z.offVal } : { note: z.note, velocity: z.vel }),
-        });
-        if (z.type === 'freeze') base.holds = key === 'yaw' ? 'pitch' : 'yaw';
-        return base;
-      }),
-    };
-  }
-  return JSON.stringify(out, null, 2);
-}
-
-const modalWrap = document.getElementById('modalWrap');
-const modalPre = document.getElementById('modalPre');
-const modalTitle = document.getElementById('modalTitle');
-let modalFmt = 'text';
-let modalAsNew = false;   // which save the modal's Save button performs
-
-/* Open the review window for the current Setup. Nothing is stored until
-   the modal's Save button is pressed; Cancel / scrim / Esc close it. */
-function showSaveModal(asNew) {
-  modalAsNew = asNew;
-  modalFmt = 'text';
-  document.querySelectorAll('.modal-tabs .tab').forEach(b => b.classList.toggle('on', b.dataset.fmt === 'text'));
-  modalPre.textContent = exportText();
-  const updating = !asNew && state.loadedId && libEntry(state.loadedId);
-  modalTitle.textContent = asNew ? 'SAVE AS NEW SETUP' : (updating ? 'SAVE SETUP' : 'SAVE TO LIBRARY');
-  modalWrap.hidden = false;
-  document.getElementById('confirmSaveBtn').focus();
-}
-function hideModal() { modalWrap.hidden = true; }
 /* brief confirmation on the SETUP field after a save (same glow as a MIDI-in load) */
 function flashProgName() {
   const el = document.getElementById('progName');
@@ -1262,56 +1372,86 @@ function flashProgName() {
   el.classList.add('saved');
   el.addEventListener('animationend', () => el.classList.remove('saved'), { once: true });
 }
-document.getElementById('confirmSaveBtn').addEventListener('click', () => {
-  saveProgram(modalAsNew);
-  hideModal();
-  flashProgName();
-});
-document.getElementById('cancelBtn').addEventListener('click', hideModal);
-document.getElementById('modalScrim').addEventListener('click', hideModal);
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modalWrap.hidden) hideModal(); });
-document.querySelectorAll('.modal-tabs .tab').forEach(b => {
-  b.addEventListener('click', () => {
-    modalFmt = b.dataset.fmt;
-    document.querySelectorAll('.modal-tabs .tab').forEach(x => x.classList.toggle('on', x === b));
-    modalPre.textContent = modalFmt === 'json' ? exportJSON() : exportText();
-  });
-});
-document.getElementById('copyBtn').addEventListener('click', async () => {
-  const txt = modalPre.textContent;
-  try {
-    await navigator.clipboard.writeText(txt);
-  } catch (e) {
-    const range = document.createRange();
-    range.selectNodeContents(modalPre);
-    const sel = getSelection();
-    sel.removeAllRanges(); sel.addRange(range);
-    document.execCommand('copy');
-    sel.removeAllRanges();
-  }
-  const cap = document.querySelector('#copyBtn .amb-button-cap');
-  const old = cap.textContent;
-  cap.textContent = 'Copied';
-  setTimeout(() => { cap.textContent = old; }, 900);
-});
 
 /* ── Setup fields / reset / boot ─────────────────────────────────── */
 
 const progNum = document.getElementById('progNum');
 const progName = document.getElementById('progName');
-progName.value = state.program.name;
-progName.addEventListener('input', () => { state.program.name = progName.value.toUpperCase().slice(0, 10); saveState(); });
+progName.value = state.names[state.tab];
+progName.addEventListener('input', () => { state.names[state.tab] = progName.value.toUpperCase().slice(0, 10); saveState(); updateSaveButtons(); });
 
 document.getElementById('resetBtn').addEventListener('click', () => guardUnsaved('resetting the demo', () => {
   if (!confirm('Reset the demo? This also clears the Library and Set List.')) return;
   state = defaultState();
-  progName.value = state.program.name;
-  buildPanels();
-  for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
-  renderLibrarian();
+  updateOutTabs();
+  refreshEditor();
 }));
 
+/* ── export / import: the whole librarian as one .json file ─────── */
+
+function exportFile() {
+  const doc = {
+    format: 'orbit-ui-library',
+    version: APP_VERSION,
+    exportedAt: new Date().toISOString(),
+    receiveChannel: state.globalCh,
+    library: state.library,      /* { midi: [files], analog: [files] } */
+    setlist: state.setlist,      /* [{ midi: id, analog: id }] */
+  };
+  const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  const d = new Date();
+  a.href = URL.createObjectURL(blob);
+  a.download = `orbit-setups-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function importFile(text) {
+  let doc;
+  try { doc = JSON.parse(text); } catch (e) { alert('That file is not valid JSON.'); return; }
+  if (!doc || doc.format !== 'orbit-ui-library' || !doc.library || !doc.library.midi || !doc.library.analog) {
+    alert('That file is not an Orbit UI library export.'); return;
+  }
+  const n = doc.library.midi.length + doc.library.analog.length;
+  if (!confirm(`Replace your Library and Set List with this file? (${doc.library.midi.length} MIDI + ${doc.library.analog.length} Analog Setups, ${(doc.setlist || []).length} slots)`)) return;
+  state.library = { midi: doc.library.midi, analog: doc.library.analog };
+  state.setlist = doc.setlist || [];
+  if (doc.receiveChannel !== undefined) { state.globalCh = doc.receiveChannel; globalChSel.value = String(state.globalCh); }
+  state.loaded = { midi: null, analog: null };
+  migrateLibrary(state);          /* validates shapes, fills any half-empty slots */
+  for (const f of state.library.midi.concat(state.library.analog)) for (const k of ['yaw', 'pitch']) f.axes[k] = f.axes[k] || [];
+  if (state.setlist.length) loadSlot(0); else refreshEditor();
+  saveState();
+  flashProgName();
+}
+
+document.getElementById('exportBtn').addEventListener('click', exportFile);
+const importInput = document.getElementById('importFile');
+document.getElementById('importBtn').addEventListener('click', () => guardUnsaved('importing a file', () => { importInput.value = ''; importInput.click(); }));
+importInput.addEventListener('change', () => {
+  const file = importInput.files && importInput.files[0];
+  if (!file) return;
+  file.text().then(importFile);
+});
+
 document.getElementById('appVersion').textContent = 'v' + APP_VERSION;
+
+/* ── output tabs: MIDI · Analog Out ──────────────────────────────── */
+
+const outTabs = [...document.querySelectorAll('.out-tab')];
+function updateOutTabs() {
+  outTabs.forEach(t => t.classList.toggle('on', t.dataset.tab === state.tab));
+}
+outTabs.forEach(t => t.addEventListener('click', () => {
+  if (state.tab === t.dataset.tab) return;
+  closePopover();
+  state.tab = t.dataset.tab;
+  saveState();
+  updateOutTabs();
+  refreshEditor();
+}));
+updateOutTabs();
 
 buildPanels();
 for (const key of ['yaw', 'pitch']) commit(state.axes[key]);

@@ -39,13 +39,36 @@ The words in the UI follow the terminology agreed with David Mash:
 | **response curve** | a Controller zone's points, mapping travel to CC value (linear or smooth). Its first and last points are the zone's end points |
 | **transmit channel** | the MIDI channel a zone sends on, set per zone |
 | **Receive Channel** | the channel Orbit listens on for program changes (`RECEIVE CH` in the header) |
-| **Setup** | one saved configuration: name and the zones of both axes |
-| **Library** / **Set List** | where Setups are stored / the ordered performance list; position = program change number |
+| **output tab** | **MIDI** or **Analog Out** — each axis has one zone set per tab, edited in the same way; only what a zone drives differs |
+| **Setup** | one saved file for one output: a name and the zones of both axes on that tab (a MIDI Setup, an Analog Out Setup; a Ground Control Setup later) |
+| **Library** | one library per output tab; the Library panel shows the current tab's |
+| **Set List** | the ordered performance list; position = program change number. Each **slot** holds one Setup per output, and a program change recalls them all at once |
 
-## The model (v1.8)
+## The model (v1.8 / v1.9)
 
 Each axis (**YAW** left→right, **PITCH** heel→toe) is one span of travel,
-0–100%, holding **zones**. Every zone has a type, a travel range, and a
+0–100%, holding **zones**. Since v1.9 there are two **output tabs** above
+the editor, **MIDI** and **ANALOG OUT**, and each axis has its own zone set
+per tab. The editor is identical on both; the tabs differ in what a
+Controller zone drives: a transmit channel + CC (0–127) on MIDI, or the
+axis's **EXP jack** (0–5 V) on Analog Out — pitch is EXP 1 and yaw is EXP 2,
+fixed by the hardware, so there is nothing to pick. The Analog tab offers
+only Controller, Switch and Dead zones and has no chips; its Switch zones
+toggle the jack between two voltages. The ▲ sim marker is shared (it is the same pedal).
+
+**Saving is per tab.** Each axis header has a **save** button that stores the
+current tab's zones (both axes) as a Setup in that tab's Library, so a MIDI
+Setup and an Analog Out Setup are separate files. The button lights up when
+that axis differs from the saved file (or nothing is loaded yet).
+A **Set List slot** holds one Setup per output (MIDI, Analog Out, and Ground
+Control once that tab exists); a program change recalls every output's Setup
+in the slot together. Drag a Library row *between* slots to add a new slot
+holding it, or *onto* a slot to fill that slot's entry for the current tab.
+A slot always has a Setup for every output: when it gains one for one tab,
+the missing ones are created as mirrors with the same name (MIDI → Analog
+turns every non-Controller zone into a Dead zone), and you edit them
+independently from there. The slot row shows the current tab's Setup;
+switch tabs to see the slot's other Setups. Every zone has a type, a travel range, and a
 color, and zones **may overlap** — a second CC on the same sweep is just a
 second Controller zone laid over the first. Controller zones always sit
 underneath the other types; within a type the narrowest zone is drawn on top
@@ -65,12 +88,20 @@ the overlap, the other goes dotted there, and both chips turn amber.
 | ❄️ **Freeze** | holds the other axis's value while the pedal is in the zone |
 | 🪦 **Dead** | travel is ignored. A Dead zone is a **mask**: it silences any Controller zone underneath it, so you can carve a dead spot out of a wide Controller zone without splitting it. Travel with no zone at all is dead too |
 
-Default Setup: yaw is Dead · CTL · Dead · CTL · Dead (the "bipolar Mid=Hi"
-example: left zone 0→127, right zone 127→0), pitch is Dead · CTL · Dead.
+Default Setup (MIDI): yaw is two Controller zones (the "bipolar Mid=Hi"
+example: left 0→127, right 127→0) with empty travel at the ends and at
+center; pitch is one Controller with empty travel at heel and toe. The
+padding is plain empty travel, not Dead zones. Analog Out starts as a **mirror of the MIDI zones**: Controller curves
+map 0–127 onto 0–5 V unchanged, and every other zone (Note, Freeze, Switch,
+Dead) becomes a Dead zone of the same range, so the dead spots line up. From
+there the two are edited independently. To start an
+Analog Setup over from MIDI, delete it from the Analog library: its slot gets
+a fresh mirror.
 
 Pre-v1.8 Setups (with layers) migrate automatically: layer 1 and layer 2
-both land on the axis as overlapping zones in two colors (an OFF layer 2 is
-dropped).
+both land on the MIDI tab as overlapping zones in two colors (an OFF layer 2
+is dropped). v1.8 Setups keep their zones on the MIDI tab and get an Analog
+Out Setup mirrored from them.
 
 ## Interactions
 
@@ -79,17 +110,19 @@ dropped).
 | drag a point | move it in travel/value (end points move in value only; drag the zone's edge to move them in travel) |
 | double-click / double-tap inside a Controller zone | add a curve point to the topmost Controller zone there |
 | tap a point | popover: numeric travel/value, delete (end points can't be deleted) |
-| tap a zone (or its `CH·CC` chip) | popover: type (Controller / Note / Switch / Freeze / Dead), range %, color, the type's settings (transmit ch, CC, note, velocity, switch action + speed, linear ↔ smooth response curve), delete |
+| MIDI / ANALOG OUT tabs | switch which output's zones you are editing |
+| tap a zone (or its `CH·CC` chip on MIDI) | popover: type (Controller / Note / Switch / Freeze / Dead on MIDI; Controller / Switch / Dead on Analog), range %, color, the type's settings (transmit ch + CC, note, velocity, switch action / voltages + speed, linear ↔ smooth response curve), delete |
 | drag a zone's end point | resize the zone — its response curve rescales to follow |
 | drag a zone's body | move the zone, curve and all |
 | **+ Zone** button | adds a Controller zone over the middle third, on top, in the next color, and opens its popover so you can pick the type |
 | drag the ▲ marker | simulate pedal position; readout lists every active output at the marker (`DEAD` when none). Flick it fast into a ⚡ Switch zone to toggle it |
-| **Save** / **+ new** | open a review window showing the full Setup as readable text or JSON (with a copy button); its **Save** stores the Setup in the Library (Save updates the loaded one, + new makes a copy), **Cancel** / Esc closes without storing (v1.2, review step v1.6) |
-| unsaved changes | loading another Setup, + new, a MIDI-in program change, or reset demo first asks **Save / Discard / Cancel** when the loaded Setup has been edited (v1.7) |
+| **save** (in each axis header) / **+ new** | save stores the current tab's Setup in its Library (updating the loaded one); + new stores it as a new Setup under the SETUP name. The save button lights when that axis has unsaved changes (v1.2, per tab and per axis v1.9) |
+| unsaved changes | loading another Setup or slot, + new, a MIDI-in program change, or reset demo first asks **Save / Discard / Cancel** when any tab's loaded Setup has been edited; Save saves every dirty tab (v1.7) |
 | **RECEIVE CH** | the channel Orbit *receives* on (1–16 or OMNI) — separate from the transmit channels set per zone (v1.4, renamed v1.7) |
 | **MIDI IN · TEST** | simulate an incoming program change: on the receive channel it loads that Set List slot (with a flash); otherwise it's ignored (v1.4) |
-| Library row | tap to load · `+` appends to the Set List · `×` twice deletes · drag the bar (anywhere, v1.3) into the Set List at any position |
-| Set List row | drag the bar to reorder — position is the 1:1 program change number · drag it onto the Library to remove (v1.3) · `×` removes · tap loads |
+| Library row | tap to load into the current tab · `×` deletes the file after a confirmation (its slots get a fresh mirror from their other output, or are dropped if nothing is left) · drag the bar between slots to insert a new slot (the other outputs get mirrored copies), or onto a slot to replace its entry for this tab |
+| **export file** / **import file** (footer) | export writes both libraries, the Set List and the receive channel to a `.json` file; import restores from such a file after a confirmation (replacing what is there) |
+| Set List row | tap to recall the whole slot (every output) · drag the bar to reorder — position is the 1:1 program change number · drag it onto the Library to remove the slot (v1.3) · `×` removes the slot |
 
 Setup name (10 chars, like GC patches) and number (1–128) sit in the
 header and are included in the review window's output. State persists in

@@ -96,6 +96,34 @@ body {
 }
 .ghostbtn:hover { color: var(--ink); border-color: var(--span-edge); }
 .ghostbtn.on { color: var(--sim); border-color: var(--sim); }
+.savebtn.on { box-shadow: 0 0 9px hsl(16 100% 60% / .45); text-shadow: 0 0 6px hsl(16 100% 60% / .5); }
+
+/* ── output tabs ─────────────────────────────────────────────────── */
+.out-tabs {
+  display: flex; gap: 8px;
+  padding: 6px 22px 0; max-width: 1180px; margin: 0 auto; box-sizing: border-box;
+}
+.out-tab {
+  display: flex; align-items: center; gap: 9px;
+  font-family: inherit; font-size: 9px; letter-spacing: .14em;
+  color: var(--ink-dim); cursor: pointer;
+  background: var(--well); border: 1px solid var(--well-line);
+  border-radius: 10px 10px 0 0; border-bottom: none;
+  padding: 8px 16px 10px;
+}
+.ot-midi { --ot-accent: var(--trace); }
+.ot-analog { --ot-accent: #2dd4bf; }
+.out-tab .ot-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: hsl(250 15% 25%);
+}
+.out-tab.on {
+  color: var(--ink);
+  border-color: var(--ot-accent);
+  background: color-mix(in oklab, var(--ot-accent) 13%, var(--well));
+}
+.out-tab.on .ot-dot { background: var(--ot-accent); box-shadow: 0 0 6px var(--ot-accent); }
+.out-tab:hover { color: var(--ink); }
 
 /* ── axis panels ─────────────────────────────────────────────────── */
 main { display: grid; gap: 20px; padding: 10px 22px 6px; max-width: 1180px; margin: 0 auto; box-sizing: border-box; }
@@ -142,7 +170,11 @@ svg .zone-label { letter-spacing: .08em; }
   color: var(--ink); text-transform: uppercase;
   display: flex; align-items: center; gap: 8px;
 }
-#popover h3 .amb-led { width: 6px; height: 6px; }
+#popover h3 .amb-led { width: 6px; height: 6px; flex: none; }
+#popover h3 .pop-tag {
+  margin-left: auto; flex: none; font-family: var(--mono); font-size: 8px; letter-spacing: .1em;
+  color: var(--ink-dim); border: 1px solid var(--well-line); border-radius: 8px; padding: 1px 6px;
+}
 .pop-rows { display: grid; gap: 9px; }
 .pop-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .pop-row label { font-size: 8px; letter-spacing: .12em; color: var(--ink-dim); text-transform: uppercase; }
@@ -199,7 +231,7 @@ svg .zone-label { letter-spacing: .08em; }
 .swatch:hover { opacity: .85; }
 .swatch.on { opacity: 1; border-color: #fff; box-shadow: 0 0 7px var(--sw); }
 .pair { display: flex; align-items: center; gap: 4px; font-family: var(--mono); color: var(--ink-dim); }
-.pair input { width: 58px; }
+.pair input { width: 66px; }
 .seg { display: flex; border: 1px solid var(--well-line); border-radius: 6px; overflow: hidden; }
 .seg button {
   font-family: inherit; font-size: 8px; letter-spacing: .1em; text-transform: uppercase;
@@ -211,25 +243,14 @@ svg .zone-label { letter-spacing: .08em; }
 #popover .amb-led { --amb-led-color: var(--trace); }
 
 /* ── modal ───────────────────────────────────────────────────────── */
-#modalWrap, #askWrap { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 18px; }
-#modalWrap[hidden], #askWrap[hidden], #popover[hidden] { display: none; }
-#modalScrim, #askScrim { position: absolute; inset: 0; background: hsl(250 45% 3% / .7); }
+#askWrap { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 18px; }
+#askWrap[hidden], #popover[hidden] { display: none; }
+#askScrim { position: absolute; inset: 0; background: hsl(250 45% 3% / .7); }
 #askWrap { z-index: 70; }
 #ask { position: relative; width: min(440px, 100%); padding: 18px; box-sizing: border-box; }
 #ask p { margin: 0; font-size: 13px; color: var(--ink); line-height: 1.5; }
-#modal {
-  position: relative; width: min(660px, 100%); max-height: 86vh;
-  display: flex; flex-direction: column; padding: 18px; box-sizing: border-box;
-}
 .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .modal-head h2 { margin: 0; font-size: 11px; font-weight: 400; letter-spacing: .18em; }
-.modal-tabs { display: flex; gap: 6px; }
-#modalPre {
-  flex: 1; overflow: auto; margin: 0;
-  font-family: var(--mono); font-size: 11.5px; line-height: 1.55; color: var(--ink);
-  background: var(--well); border: 1px solid var(--well-line); border-radius: 10px;
-  padding: 14px; white-space: pre;
-}
 .modal-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
 
 /* ── librarian ───────────────────────────────────────────────────── */
@@ -240,8 +261,9 @@ svg .zone-label { letter-spacing: .08em; }
 }
 .lib-col { min-width: 0; }
 .lib-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.lib-head h2 { margin: 0; font-size: 11px; font-weight: 400; letter-spacing: .18em; color: var(--ink); }
-.lib-note { font-size: 8px; letter-spacing: .1em; color: var(--ink-dim); text-transform: uppercase; margin-left: auto; text-align: right; }
+.lib-head h2 { margin: 0; font-size: 11px; font-weight: 400; letter-spacing: .18em; color: var(--ink); white-space: nowrap; flex: none; }
+.lib-head .ghostbtn { flex: none; white-space: nowrap; }
+.lib-note { font-size: 8px; letter-spacing: .1em; color: var(--ink-dim); text-transform: uppercase; margin-left: auto; text-align: right; min-width: 0; }
 .lib-list {
   list-style: none; margin: 0; padding: 6px; min-height: 128px;
   display: flex; flex-direction: column; gap: 6px;
@@ -257,6 +279,8 @@ svg .zone-label { letter-spacing: .08em; }
 }
 .lib-row.on, .set-row.on { border-color: var(--chip-line); background: var(--chip-fill); }
 .lib-name { flex: 1; color: var(--ink); text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-row.none .lib-name { color: var(--ink-dim); font-style: italic; }
+.set-row.onto { border-color: var(--sim); box-shadow: 0 0 10px hsl(16 100% 60% / .5); }
 .pc {
   font-family: var(--mono); font-size: 11px; color: var(--sim);
   min-width: 22px; text-align: right;
@@ -315,6 +339,8 @@ svg .zone-label { letter-spacing: .08em; }
 }
 .hints p { margin: 0; font-size: 8.5px; letter-spacing: .08em; line-height: 2; color: var(--ink-dim); }
 .hints b { color: var(--ink); font-weight: 400; }
+.foot-tools { display: flex; gap: 8px; margin-left: auto; }
+.hints { justify-content: flex-end; }
 
 @media (max-width: 640px) {
   .topbar { padding: 14px 12px 8px; }
