@@ -42,7 +42,7 @@ The words in the UI follow the terminology agreed with David Mash:
 | **output tab** | **MIDI** or **Analog Out** — each axis has one zone set per tab, edited in the same way; only what a zone drives differs |
 | **Setup** | one saved file for one output: a name and the zones of both axes on that tab (a MIDI Setup, an Analog Out Setup; a Ground Control Setup later) |
 | **Library** | one library per output tab; the Library panel shows the current tab's |
-| **Set List** | the ordered performance list; position = program change number. Each **slot** holds one Setup per output, and a program change recalls them all at once |
+| **Set List** | an ordered performance list; position = program change number. Each **slot** holds one Setup per output, and a program change recalls them all at once. There can be several Set Lists (v1.10), each with a name and a **bank** number; a MIDI Bank Select picks the Set List, a Program Change picks the slot |
 
 ## The model (v1.8 / v1.9)
 
@@ -119,9 +119,10 @@ Out Setup mirrored from them.
 | **save** (in each axis header) / **+ new** | save stores the current tab's Setup in its Library (updating the loaded one); + new stores it as a new Setup under the SETUP name. The save button lights when that axis has unsaved changes (v1.2, per tab and per axis v1.9) |
 | unsaved changes | loading another Setup or slot, + new, a MIDI-in program change, or reset demo first asks **Save / Discard / Cancel** when any tab's loaded Setup has been edited; Save saves every dirty tab (v1.7) |
 | **RECEIVE CH** | the channel Orbit *receives* on (1–16 or OMNI) — separate from the transmit channels set per zone (v1.4, renamed v1.7) |
-| **MIDI IN · TEST** | simulate an incoming program change: on the receive channel it loads that Set List slot (with a flash); otherwise it's ignored (v1.4) |
 | Library row | tap to load into the current tab · `×` deletes the file after a confirmation (its slots get a fresh mirror from their other output, or are dropped if nothing is left) · drag the bar between slots to insert a new slot (the other outputs get mirrored copies), or onto a slot to replace its entry for this tab |
-| **export file** / **import file** (footer) | export writes both libraries, the Set List and the receive channel to a `.json` file; import restores from such a file after a confirmation (replacing what is there) |
+| Set List tools (v1.10) | the dropdown picks which Set List you are editing (shown as "NAME · bank N"); **+ new** opens a small window to name the new list and give it a Bank Select number; **edit** opens the same window for the current list, with rename, re-bank and delete (Setups stay in the Library). Caps: 16 Set Lists of 128 slots, 256 Setups per library |
+| **MIDI IN · TEST** | simulate incoming MIDI: an optional BANK (Bank Select, CC 0) then a PC on the receive channel. The bank picks the Set List with that number; the PC recalls that slot (v1.4, bank v1.10) |
+| **export file** / **import file** (footer) | export writes both libraries, every Set List and the receive channel to a `.json` file; import restores from such a file after a confirmation (replacing what is there) |
 | Set List row | tap to recall the whole slot (every output) · drag the bar to reorder — position is the 1:1 program change number · drag it onto the Library to remove the slot (v1.3) · `×` removes the slot |
 
 Setup name (10 chars, like GC patches) and number (1–128) sit in the

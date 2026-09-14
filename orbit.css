@@ -253,6 +253,27 @@ svg .zone-label { letter-spacing: .08em; }
 .modal-head h2 { margin: 0; font-size: 11px; font-weight: 400; letter-spacing: .18em; }
 .modal-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
 
+/* ── set list tools ──────────────────────────────────────────────── */
+.sl-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.sl-tools select {
+  flex: 1; min-width: 0;
+  font-family: var(--mono); font-size: 12px; color: var(--ink);
+  background: var(--well); border: 1px solid var(--well-line); border-radius: 7px; padding: 6px 8px; outline: none;
+}
+.sl-tools select:focus { border-color: var(--pt-stroke); }
+.sl-tools .ghostbtn { padding: 7px 10px; flex: none; }
+#miBank { width: 48px; }
+/* set list dialog */
+#slWrap { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 18px; }
+#slWrap[hidden] { display: none; }
+#slScrim { position: absolute; inset: 0; background: hsl(250 45% 3% / .7); }
+#slDialog { position: relative; width: min(360px, 100%); padding: 18px; box-sizing: border-box; }
+#slDialog .modal-head { margin-bottom: 12px; }
+#slDialog .pop-row input { width: 120px; }
+#slName { text-transform: uppercase; letter-spacing: .1em; }
+#slDialog .modal-foot { align-items: center; }
+.dangerbtn.slim { width: auto; margin: 0 auto 0 0; padding: 7px 12px; }
+
 /* ── librarian ───────────────────────────────────────────────────── */
 .lib-outer { padding: 10px 22px 6px; max-width: 1180px; margin: 0 auto; box-sizing: border-box; }
 .librarian {

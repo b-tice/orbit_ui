@@ -16,7 +16,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.9';
+const APP_VERSION = '1.10';
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -25,6 +25,10 @@ let uidn = 1;
 const uid = () => 'z' + (uidn++) + '_' + Math.random().toString(36).slice(2, 7);
 
 const MIN_ZONE = 0.02;          /* narrowest zone, as a fraction of travel */
+/* storage caps (the pedal's file system is not the limit; these keep lists sane) */
+const MAX_SETUPS = 256;         /* per output library */
+const MAX_SETLISTS = 16;
+const MAX_SLOTS = 128;          /* = the Program Change range */
 /* Switch zones fire on a FAST entry. Speed is in m/s along the pedal's
    travel, taking the full span (0–100 %) as SPAN_M metres of movement —
    about what a foot covers heel-to-toe on an expression pedal. */
@@ -149,7 +153,7 @@ const mirrorZones = (zones, toTab) => (toTab === 'analog' ? mirrorToAnalog(zones
    mirror (same name) so the slot recalls something sensible everywhere.
    Works on a raw state object so migration can use it too. */
 function fillSlots(st) {
-  for (const sl of st.setlist) {
+  for (const sl of st.setlists.flatMap(l => l.slots)) {
     const src = TAB_ORDER.find(t => sl[t] && st.library[t].find(f => f.id === sl[t]));
     if (!src) continue;
     const from = st.library[src].find(f => f.id === sl[src]);
@@ -177,6 +181,10 @@ const defaultOutputs = key => ({
 /* one library file: the zones of both axes for ONE output */
 const mkFile = (name, axesZones) => ({ id: uid(), name, axes: JSON.parse(JSON.stringify(axesZones)) });
 const emptySlot = () => ({ midi: null, analog: null });
+/* a Set List: a name, the MIDI bank number that recalls it, and its slots */
+const mkSetlist = (name, bank) => ({ id: uid(), name, bank: bank || 0, slots: [] });
+const activeSL = () => state.setlists.find(x => x.id === state.activeSetlist) || state.setlists[0];
+const slots = () => activeSL().slots;
 
 function defaultState() {
   return {
@@ -196,7 +204,8 @@ function defaultState() {
       },
     },
     library: { midi: [], analog: [] },
-    setlist: [],                                 /* [{midi: fileId|null, analog: fileId|null}] */
+    setlists: [mkSetlist('SET LIST 1', 0)],      /* slots: [{midi: fileId|null, analog: fileId|null}] */
+    activeSetlist: null,                         /* id; null = the first */
     globalCh: 16, /* receive channel for incoming MIDI (or 'omni') */
   };
 }
@@ -296,11 +305,20 @@ function migrateLibrary(s) {
   s.library = s.library || { midi: [], analog: [] };
   s.library.midi = s.library.midi || [];
   s.library.analog = s.library.analog || [];
-  s.setlist = (s.setlist || []).map(sl => (typeof sl === 'object' && sl ? { midi: sl.midi || null, analog: sl.analog || null } : null)).filter(Boolean);
+  /* v1.9's single Set List → the first of many */
+  if (!s.setlists) {
+    const first = mkSetlist('SET LIST 1', 0);
+    first.slots = (s.setlist || []).map(sl => (typeof sl === 'object' && sl ? { midi: sl.midi || null, analog: sl.analog || null } : null)).filter(Boolean);
+    s.setlists = [first];
+    delete s.setlist;
+  }
+  if (!s.setlists.length) s.setlists = [mkSetlist('SET LIST 1', 0)];
+  for (const l of s.setlists) { l.slots = l.slots || []; l.bank = l.bank || 0; l.name = l.name || 'SET LIST'; }
+  if (!s.setlists.find(x => x.id === s.activeSetlist)) s.activeSetlist = s.setlists[0].id;
   s.loaded = s.loaded || { midi: null, analog: null };
   s.names = s.names || { midi: 'INIT', analog: 'INIT' };
   if (!s.analogMirrored) {
-    for (const sl of s.setlist) {
+    for (const sl of s.setlists.flatMap(l => l.slots)) {
       const m = sl.midi && s.library.midi.find(f => f.id === sl.midi);
       const a = sl.analog && s.library.analog.find(f => f.id === sl.analog);
       if (!m || !a) continue;
@@ -1097,7 +1115,7 @@ const axesZones = tab => ({ yaw: state.axes.yaw.outputs[tab].zones, pitch: state
 /* the current tab's loaded file's 1-based Set List position (its PC number), or null */
 function loadedPC() {
   const id = state.loaded[state.tab];
-  const i = id ? state.setlist.findIndex(sl => sl[state.tab] === id) : -1;
+  const i = id ? slots().findIndex(sl => sl[state.tab] === id) : -1;
   return i >= 0 ? i + 1 : null;
 }
 
@@ -1110,6 +1128,7 @@ function saveProgram(asNew, tab) {
     f.name = name;
     f.axes = JSON.parse(JSON.stringify(axesZones(tab)));
   } else {
+    if (lib(tab).length >= MAX_SETUPS) { alert(`The ${OUTPUTS[tab].label} library holds at most ${MAX_SETUPS} Setups.`); return; }
     f = mkFile(name, axesZones(tab));
     lib(tab).push(f);
     state.loaded[tab] = f.id;
@@ -1136,7 +1155,7 @@ function refreshEditor() {
 }
 /* load a Set List slot: every output that has a file (the pedal's PC behavior) */
 function loadSlot(i) {
-  const sl = state.setlist[i];
+  const sl = slots()[i];
   if (!sl) return;
   for (const tab of TAB_ORDER) if (sl[tab]) loadFile(sl[tab], tab);
   refreshEditor();
@@ -1152,8 +1171,9 @@ function renderLibrarian() {
         <button class="rowbtn" data-del type="button" title="delete this Setup">×</button>
       </li>`).join('')
     : `<li class="lib-empty">empty — SAVE stores the current ${OUT().label} Setup</li>`;
-  setListEl.innerHTML = state.setlist.length
-    ? state.setlist.map((sl, i) => {
+  renderSetlistTools();
+  setListEl.innerHTML = slots().length
+    ? slots().map((sl, i) => {
       const mine = sl[tab] ? libFile(sl[tab], tab) : null;
       return `
       <li class="set-row${mine && mine.id === state.loaded[tab] ? ' on' : ''}${mine ? '' : ' none'}" data-idx="${i}">
@@ -1166,6 +1186,81 @@ function renderLibrarian() {
   progNum.value = loadedPC() ?? '—';
 }
 
+/* ── Set List tools: one dropdown, + new, edit (dialog) ──────────── */
+
+const slSelect = document.getElementById('slSelect');
+function renderSetlistTools() {
+  const l = activeSL();
+  slSelect.innerHTML = state.setlists.map(x =>
+    `<option value="${x.id}"${x.id === l.id ? ' selected' : ''}>${esc(x.name)} · bank ${x.bank}</option>`).join('');
+}
+slSelect.addEventListener('change', () => {
+  guardUnsaved('switching Set Lists', () => {
+    state.activeSetlist = slSelect.value;
+    saveState();
+    renderLibrarian();
+  });
+  renderSetlistTools();   /* snap the select back if the guard was cancelled */
+});
+
+/* the dialog serves both "new" and "edit" */
+const slWrap = document.getElementById('slWrap');
+const slName = document.getElementById('slName');
+const slBank = document.getElementById('slBank');
+const slDel = document.getElementById('slDel');
+let slEditing = null;   /* the Set List being edited, or null when creating */
+function openSetlistDialog(l) {
+  slEditing = l;
+  document.getElementById('slTitle').textContent = l ? 'EDIT SET LIST' : 'NEW SET LIST';
+  document.querySelector('#slOk .amb-button-cap').textContent = l ? 'Save' : 'Create';
+  slDel.hidden = !l;
+  if (l) { slName.value = l.name; slBank.value = l.bank; }
+  else {
+    const used = new Set(state.setlists.map(x => x.bank));
+    let bank = 0; while (used.has(bank) && bank < 127) bank++;
+    slName.value = `SET LIST ${state.setlists.length + 1}`; slBank.value = bank;
+  }
+  slWrap.hidden = false;
+  slName.focus(); slName.select();
+}
+function closeSetlistDialog() { slWrap.hidden = true; slEditing = null; }
+document.getElementById('slNew').addEventListener('click', () => {
+  if (state.setlists.length >= MAX_SETLISTS) { alert(`At most ${MAX_SETLISTS} Set Lists.`); return; }
+  openSetlistDialog(null);
+});
+document.getElementById('slEdit').addEventListener('click', () => openSetlistDialog(activeSL()));
+document.getElementById('slCancel').addEventListener('click', closeSetlistDialog);
+document.getElementById('slScrim').addEventListener('click', closeSetlistDialog);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !slWrap.hidden) closeSetlistDialog(); });
+document.getElementById('slOk').addEventListener('click', () => {
+  const name = (slName.value || 'SET LIST').toUpperCase().slice(0, 10).trim() || 'SET LIST';
+  const bank = clampi(parseFloat(slBank.value), 0, 127);
+  const clash = state.setlists.find(x => x !== slEditing && x.bank === bank);
+  if (clash && !confirm(`Bank ${bank} already recalls "${clash.name}". Use it for this one too? (Bank Select will pick whichever comes first.)`)) return;
+  if (slEditing) { slEditing.name = name; slEditing.bank = bank; }
+  else {
+    const l = mkSetlist(name, bank);
+    state.setlists.push(l);
+    state.activeSetlist = l.id;
+  }
+  closeSetlistDialog();
+  saveState();
+  renderLibrarian();
+});
+slName.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('slOk').click(); });
+slBank.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('slOk').click(); });
+slDel.addEventListener('click', () => {
+  const l = slEditing;
+  if (!l) return;
+  if (!confirm(`Delete Set List "${l.name}"?${l.slots.length ? ` It has ${l.slots.length} slot${l.slots.length > 1 ? 's' : ''}.` : ''} (Setups stay in the Library.)`)) return;
+  state.setlists = state.setlists.filter(x => x !== l);
+  if (!state.setlists.length) state.setlists.push(mkSetlist('SET LIST 1', 0));
+  state.activeSetlist = state.setlists[0].id;
+  closeSetlistDialog();
+  saveState();
+  renderLibrarian();
+});
+
 libListEl.addEventListener('click', e => {
   const row = e.target.closest('.lib-row');
   if (!row) return;
@@ -1173,11 +1268,13 @@ libListEl.addEventListener('click', e => {
   const tab = state.tab;
   if (e.target.closest('[data-del]')) {
     const f = libFile(id, tab);
-    const used = state.setlist.filter(sl => sl[tab] === id).length;
+    const used = state.setlists.flatMap(l => l.slots).filter(sl => sl[tab] === id).length;
     if (!confirm(`Delete "${f ? f.name : '?'}" from the ${OUT().label} library?${used ? ` It is used by ${used} set list slot${used > 1 ? 's' : ''}.` : ''}`)) return;
     state.library[tab] = lib().filter(x => x.id !== id);
-    for (const sl of state.setlist) if (sl[tab] === id) sl[tab] = null;
-    state.setlist = state.setlist.filter(sl => TAB_ORDER.some(t => sl[t]));   /* drop slots left empty */
+    for (const l of state.setlists) {
+      for (const sl of l.slots) if (sl[tab] === id) sl[tab] = null;
+      l.slots = l.slots.filter(sl => TAB_ORDER.some(t => sl[t]));   /* drop slots left empty */
+    }
     fillSlots(state);   /* a slot that still has its other output gets a fresh mirror */
     if (state.loaded[tab] === id) state.loaded[tab] = null;
     saveState();
@@ -1195,7 +1292,7 @@ setListEl.addEventListener('click', e => {
   if (!row) return;
   const idx = +row.dataset.idx;
   if (e.target.closest('[data-del]')) {
-    state.setlist.splice(idx, 1);
+    slots().splice(idx, 1);
     saveState();
     renderLibrarian();
     return;
@@ -1296,19 +1393,21 @@ function wireRowDrag(listEl, kind) {
       if (active) {
         if (kind === 'lib') {
           if (ontoIdx >= 0) {
-            state.setlist[ontoIdx][state.tab] = id;
+            slots()[ontoIdx][state.tab] = id;
+          } else if (slots().length >= MAX_SLOTS) {
+            alert(`A Set List holds at most ${MAX_SLOTS} slots (the Program Change range).`);
           } else {
             const sl = emptySlot(); sl[state.tab] = id;
-            state.setlist.splice(dropIdx, 0, sl);
+            slots().splice(dropIdx, 0, sl);
           }
           fillSlots(state);
         } else {
-          const [moved] = state.setlist.splice(oldIdx, 1);
-          state.setlist.splice(dropIdx, 0, moved);
+          const [moved] = slots().splice(oldIdx, 1);
+          slots().splice(dropIdx, 0, moved);
         }
         saveState();
       } else if (overLib) {
-        state.setlist.splice(oldIdx, 1);
+        slots().splice(oldIdx, 1);
         saveState();
       }
       renderLibrarian(); /* also clears .dragging */
@@ -1372,15 +1471,29 @@ globalChSel.addEventListener('change', () => {
   saveState();
 });
 
-/* the device rule: a PC on the receive channel recalls that slot — every output at once */
+/* Bank Select (CC 0) on the receive channel picks the Set List with that
+   bank number; the next Program Change recalls a slot within it. */
+function receiveBankSelect(ch, bank) {
+  const gch = state.globalCh;
+  if (gch !== 'omni' && ch !== gch) return { ok: false, msg: `bank ${bank} ch${ch} — ignored (receive ch ${gch})` };
+  const l = state.setlists.find(x => x.bank === bank);
+  if (!l) return { ok: false, msg: `bank ${bank} ch${ch} — no Set List has that bank` };
+  state.activeSetlist = l.id;
+  saveState();
+  renderLibrarian();
+  return { ok: true, msg: `bank ${bank} ch${ch} → Set List "${l.name}"` };
+}
+
+/* the device rule: a PC on the receive channel recalls that slot of the
+   current Set List — every output at once */
 function receiveProgramChange(ch, pc, force) {
   const gch = state.globalCh;
   if (gch !== 'omni' && ch !== gch) {
     return { ok: false, msg: `PC ${pc} ch${ch} — ignored (receive ch ${gch})` };
   }
-  const sl = state.setlist[pc - 1];
+  const sl = slots()[pc - 1];
   if (!sl) {
-    return { ok: false, msg: `PC ${pc} ch${ch} — no set list slot ${pc}` };
+    return { ok: false, msg: `PC ${pc} ch${ch} — "${activeSL().name}" has no slot ${pc}` };
   }
   if (!force && dirtyTabs().length) {
     /* ask first; on Save/Discard re-run with force so we don't ask twice */
@@ -1406,8 +1519,17 @@ function showMiLog(res) {
   miLog.classList.toggle('ok', res.ok);
 }
 document.getElementById('miSend').addEventListener('click', () => {
+  const ch = +miCh.value;
+  const bankRaw = document.getElementById('miBank').value.trim();
   const pc = clampi(parseFloat(document.getElementById('miPc').value), 1, 128);
-  showMiLog(receiveProgramChange(+miCh.value, pc));
+  if (bankRaw !== '') {
+    const b = receiveBankSelect(ch, clampi(parseFloat(bankRaw), 0, 127));
+    if (!b.ok) { showMiLog(b); return; }
+    const r = receiveProgramChange(ch, pc);
+    showMiLog({ ok: r.ok, msg: `${b.msg} · ${r.msg}` });
+    return;
+  }
+  showMiLog(receiveProgramChange(ch, pc));
 });
 
 /* brief confirmation on the SETUP field after a save (same glow as a MIDI-in load) */
@@ -1442,7 +1564,8 @@ function exportFile() {
     exportedAt: new Date().toISOString(),
     receiveChannel: state.globalCh,
     library: state.library,      /* { midi: [files], analog: [files] } */
-    setlist: state.setlist,      /* [{ midi: id, analog: id }] */
+    setlists: state.setlists,    /* [{ id, name, bank, slots: [{ midi: id, analog: id }] }] */
+    activeSetlist: state.activeSetlist,
   };
   const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -1459,15 +1582,18 @@ function importFile(text) {
   if (!doc || doc.format !== 'orbit-ui-library' || !doc.library || !doc.library.midi || !doc.library.analog) {
     alert('That file is not an Orbit UI library export.'); return;
   }
-  const n = doc.library.midi.length + doc.library.analog.length;
-  if (!confirm(`Replace your Library and Set List with this file? (${doc.library.midi.length} MIDI + ${doc.library.analog.length} Analog Setups, ${(doc.setlist || []).length} slots)`)) return;
+  const lists = doc.setlists || (doc.setlist ? [{ name: 'SET LIST 1', bank: 0, slots: doc.setlist }] : []);
+  const nSlots = lists.reduce((n, l) => n + (l.slots || []).length, 0);
+  if (!confirm(`Replace your Library and Set Lists with this file? (${doc.library.midi.length} MIDI + ${doc.library.analog.length} Analog Setups, ${lists.length} Set List${lists.length === 1 ? '' : 's'}, ${nSlots} slots)`)) return;
   state.library = { midi: doc.library.midi, analog: doc.library.analog };
-  state.setlist = doc.setlist || [];
+  state.setlists = lists.map(l => ({ id: l.id || uid(), name: l.name, bank: l.bank || 0, slots: l.slots || [] }));
+  state.activeSetlist = doc.activeSetlist || null;
+  delete state.setlist;
   if (doc.receiveChannel !== undefined) { state.globalCh = doc.receiveChannel; globalChSel.value = String(state.globalCh); }
   state.loaded = { midi: null, analog: null };
   migrateLibrary(state);          /* validates shapes, fills any half-empty slots */
   for (const f of state.library.midi.concat(state.library.analog)) for (const k of ['yaw', 'pitch']) f.axes[k] = f.axes[k] || [];
-  if (state.setlist.length) loadSlot(0); else refreshEditor();
+  if (slots().length) loadSlot(0); else refreshEditor();
   saveState();
   flashProgName();
 }

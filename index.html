@@ -54,10 +54,16 @@
       <div class="lib-head">
         <h2>SET LIST</h2>
       </div>
+      <div class="sl-tools">
+        <select id="slSelect" title="which Set List you are editing"></select>
+        <button class="ghostbtn" id="slNew" type="button" title="create a new Set List">+ new</button>
+        <button class="ghostbtn" id="slEdit" type="button" title="rename, re-bank or delete this Set List">edit</button>
+      </div>
       <ul class="lib-list" id="setList"></ul>
       <div class="midi-in">
         <span class="mi-title">MIDI IN · TEST</span>
         <label class="field"><span>CH</span><select id="miCh"></select></label>
+        <label class="field" title="optional Bank Select sent before the PC (blank = none)"><span>BANK</span><input id="miBank" type="number" min="0" max="127" placeholder="—" inputmode="numeric"></label>
         <label class="field"><span>PC</span><input id="miPc" type="number" min="1" max="128" value="1" inputmode="numeric"></label>
         <button class="ghostbtn" id="miSend" type="button">send</button>
         <span id="miLog"></span>
@@ -76,6 +82,27 @@
 </footer>
 
 <div id="popover" class="ambient amb-surface amb-chamfer amb-elevation-3 amb-mat-blasted amb-rounded-lg" hidden></div>
+
+<div id="slWrap" hidden>
+  <div id="slScrim"></div>
+  <div id="slDialog" class="ambient amb-surface amb-chamfer amb-elevation-3 amb-mat-blasted amb-rounded-xl">
+    <div class="modal-head"><h2 id="slTitle">NEW SET LIST</h2></div>
+    <div class="pop-rows">
+      <div class="pop-row"><label>Name</label><input id="slName" type="text" maxlength="10" autocapitalize="characters" spellcheck="false"></div>
+      <div class="pop-row"><label>Bank</label><input id="slBank" type="number" min="0" max="127" inputmode="numeric"></div>
+      <div class="pop-note">the MIDI Bank Select number (CC 0 on the receive channel) that recalls this Set List</div>
+    </div>
+    <div class="modal-foot">
+      <button class="dangerbtn slim" id="slDel" type="button" hidden>delete</button>
+      <button class="amb-button ambx-press-sm" id="slCancel" type="button">
+        <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Cancel</span>
+      </button>
+      <button class="amb-button ambx-press-sm" id="slOk" type="button">
+        <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Create</span>
+      </button>
+    </div>
+  </div>
+</div>
 
 <div id="askWrap" hidden>
   <div id="askScrim"></div>
