@@ -16,7 +16,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.11';
+const APP_VERSION = '1.12';
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -1143,9 +1143,20 @@ function loadedPC() {
   return i >= 0 ? i + 1 : null;
 }
 
-/* Save the CURRENT tab's zones as a file in that tab's library */
+/* UNTITLED, UNTITLED2, UNTITLED3 … — first name not already in the library */
+function uniqueUntitled(tab) {
+  const used = new Set(lib(tab).map(f => f.name));
+  if (!used.has('UNTITLED')) return 'UNTITLED';
+  for (let n = 2; n < 100; n++) if (!used.has('UNTITLED' + n)) return 'UNTITLED' + n;
+  return 'UNTITLED';
+}
+
+/* Save the CURRENT tab's zones as a file in that tab's library.
+   asNew: a fresh file named UNTITLED / UNTITLED2 … (the caller then opens
+   the inline rename so it gets a real name straight away). */
 function saveProgram(asNew, tab) {
   tab = tab || state.tab;
+  if (asNew) { state.names[tab] = uniqueUntitled(tab); if (tab === state.tab) progName.value = state.names[tab]; }
   const name = (state.names[tab] || 'UNTITLED').toUpperCase().slice(0, 10);
   let f = !asNew && state.loaded[tab] ? libFile(state.loaded[tab], tab) : null;
   if (f) {
@@ -1161,6 +1172,40 @@ function saveProgram(asNew, tab) {
   saveState();
   renderLibrarian();
   updateSaveButtons();
+  return f;
+}
+
+/* ── inline rename of a Library row (double-click / double-tap) ──── */
+function startRename(id) {
+  const row = libListEl.querySelector(`.lib-row[data-id="${id}"]`);
+  const f = libFile(id);
+  if (!row || !f) return;
+  const nameEl = row.querySelector('.lib-name');
+  const input = document.createElement('input');
+  input.className = 'lib-rename';
+  input.type = 'text'; input.maxLength = 10; input.value = f.name;
+  input.setAttribute('autocapitalize', 'characters'); input.spellcheck = false;
+  nameEl.replaceWith(input);
+  input.focus(); input.select();
+  let done = false;
+  const finish = (commit) => {
+    if (done) return; done = true;
+    if (commit) {
+      const name = input.value.toUpperCase().trim().slice(0, 10) || f.name;
+      f.name = name;
+      if (state.loaded[state.tab] === f.id) { state.names[state.tab] = name; progName.value = name; }
+      saveState();
+    }
+    renderLibrarian();
+    updateSaveButtons();
+  };
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    e.stopPropagation();
+  });
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('pointerdown', e => e.stopPropagation());
 }
 
 /* load one file into its output tab (only that tab changes) */
@@ -1191,7 +1236,7 @@ function loadSlot(i) {
 
 function renderLibrarian() {
   const tab = state.tab;
-  libTitleEl.textContent = `LIBRARY · ${tab === 'analog' ? 'ANALOG' : 'MIDI'}`;
+  libTitleEl.textContent = `LIBRARY OF SETUPS · ${tab === 'analog' ? 'ANALOG' : 'MIDI'}`;
   libListEl.innerHTML = lib().length
     ? lib().map(f => `
       <li class="lib-row${f.id === state.loaded[tab] ? ' on' : ''}" data-id="${f.id}">
@@ -1289,11 +1334,25 @@ slDel.addEventListener('click', () => {
   renderLibrarian();
 });
 
+let lastLibTap = { id: null, time: 0 };
+libListEl.addEventListener('dblclick', e => {
+  const row = e.target.closest('.lib-row');
+  if (row && !e.target.closest('button, input')) startRename(row.dataset.id);
+});
 libListEl.addEventListener('click', e => {
   const row = e.target.closest('.lib-row');
   if (!row) return;
+  if (e.target.closest('input')) return;
   const id = row.dataset.id;
   const tab = state.tab;
+  /* touch double-tap → rename (mouse gets the dblclick event) */
+  const now = Date.now();
+  if (lastLibTap.id === id && now - lastLibTap.time < 350 && !e.target.closest('button')) {
+    lastLibTap = { id: null, time: 0 };
+    startRename(id);
+    return;
+  }
+  lastLibTap = { id, time: now };
   if (e.target.closest('[data-del]')) {
     const f = libFile(id, tab);
     const used = state.setlists.flatMap(l => l.slots).filter(sl => sl[tab] === id).length;
@@ -1330,10 +1389,16 @@ setListEl.addEventListener('click', e => {
 });
 
 /* pointer-based row drag — grab anywhere on a bar (buttons excluded).
-   A ~6px movement threshold separates a drag from a tap-to-load.
+   Mouse: a ~6px movement threshold separates a drag from a tap-to-load.
+   Touch: the lists scroll with a swipe, so a drag starts with a short
+   press-and-hold (the row lights up), then moves; a swipe before the hold
+   completes just scrolls.
    library → set list: drop BETWEEN slots to insert a new slot holding this
    Setup, drop ONTO a slot to put this Setup into that slot's tab.
    set list ↕ reorders · set list → library removes the slot. */
+const HOLD_MS = 320;
+let dragArmed = false;   /* a touch drag is in progress: block the page from scrolling */
+document.addEventListener('touchmove', e => { if (dragArmed) e.preventDefault(); }, { passive: false });
 let swallowClick = false;
 document.addEventListener('click', e => {
   if (swallowClick) {
@@ -1346,7 +1411,7 @@ document.addEventListener('click', e => {
 function wireRowDrag(listEl, kind) {
   listEl.addEventListener('pointerdown', e => {
     if (e.button) return;
-    if (e.target.closest('button')) return;
+    if (e.target.closest('button, input')) return;
     const row = e.target.closest(kind === 'lib' ? '.lib-row' : '.set-row');
     if (!row) return;
 
@@ -1355,6 +1420,12 @@ function wireRowDrag(listEl, kind) {
     const id = row.dataset.id;
     const oldIdx = row.dataset.idx != null ? +row.dataset.idx : -1;
     let ghost = null, ph = null, active = false, overLib = false, dropIdx = 0, ontoIdx = -1;
+    const touch = e.pointerType === 'touch';
+    let held = !touch;            /* mouse drags start at once; touch after a hold */
+    let holdTimer = null;
+    if (touch) {
+      holdTimer = setTimeout(() => { held = true; dragArmed = true; row.classList.add('lifting'); }, HOLD_MS);
+    }
 
     const clearOnto = () => setListEl.querySelectorAll('.set-row.onto').forEach(x => x.classList.remove('onto'));
 
@@ -1395,6 +1466,11 @@ function wireRowDrag(listEl, kind) {
     };
 
     const move = ev => {
+      if (!held) {
+        /* moved before the hold completed: it's a scroll, not a drag */
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 8) cleanup();
+        return;
+      }
       if (!ghost) {
         if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
         ghost = row.cloneNode(true);
@@ -1408,9 +1484,16 @@ function wireRowDrag(listEl, kind) {
       place(ev);
     };
 
-    const up = () => {
+    const cleanup = () => {
+      clearTimeout(holdTimer);
+      dragArmed = false;
+      row.classList.remove('lifting');
       document.removeEventListener('pointermove', move);
       document.removeEventListener('pointerup', up);
+      document.removeEventListener('pointercancel', up);
+    };
+    const up = () => {
+      cleanup();
       if (!ghost) return; /* never crossed the threshold: it's a tap */
       swallowClick = true;
       setTimeout(() => { swallowClick = false; }, 0);
@@ -1442,6 +1525,7 @@ function wireRowDrag(listEl, kind) {
     };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', up);
   });
 }
 wireRowDrag(libListEl, 'lib');
@@ -1449,8 +1533,9 @@ wireRowDrag(setListEl, 'set');
 
 /* + new: save the current tab's zones as a NEW Setup under the SETUP name */
 document.getElementById('saveNewBtn').addEventListener('click', () => guardUnsaved('creating a new Setup', () => {
-  saveProgram(true);
+  const f = saveProgram(true);
   flashProgName();
+  if (f) startRename(f.id);   /* name it right away */
 }));
 
 /* ── v1.7: unsaved-changes guard (per output tab) ─────────────────

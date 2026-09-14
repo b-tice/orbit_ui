@@ -272,7 +272,7 @@ svg .zone-label { letter-spacing: .08em; }
 .modal-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
 
 /* ── set list tools ──────────────────────────────────────────────── */
-.sl-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.sl-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; min-height: 32px; }
 .sl-tools select {
   flex: 1; min-width: 0;
   font-family: var(--mono); font-size: 12px; color: var(--ink);
@@ -299,25 +299,37 @@ svg .zone-label { letter-spacing: .08em; }
   padding: 16px;
 }
 .lib-col { min-width: 0; }
-.lib-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.lib-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; min-height: 22px; }
 .lib-head h2 { margin: 0; font-size: 11px; font-weight: 400; letter-spacing: .18em; color: var(--ink); white-space: nowrap; flex: none; }
 .lib-head .ghostbtn { flex: none; white-space: nowrap; }
 .lib-note { font-size: 8px; letter-spacing: .1em; color: var(--ink-dim); text-transform: uppercase; margin-left: auto; text-align: right; min-width: 0; }
 .lib-list {
   list-style: none; margin: 0; padding: 6px; min-height: 128px;
+  /* about five rows, then scroll (finger-scrollable: rows use touch-action pan-y) */
+  max-height: 236px; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin; scrollbar-color: var(--span-edge) transparent; scrollbar-gutter: stable;
   display: flex; flex-direction: column; gap: 6px;
   background: var(--well); border: 1px solid var(--well-line); border-radius: 10px;
   box-shadow: inset 0 2px 9px hsl(250 40% 3% / .6);
 }
+.lib-list::-webkit-scrollbar { width: 8px; }
+.lib-list::-webkit-scrollbar-thumb { background: var(--span-edge); border-radius: 4px; border: 2px solid var(--well); }
+.lib-list::-webkit-scrollbar-track { background: transparent; }
+.lib-list > li { flex: none; }
 .lib-row, .set-row {
   display: flex; align-items: center; gap: 9px; padding: 8px 10px;
   border: 1px solid var(--well-line); border-radius: 8px;
   background: hsl(250 22% 10%); cursor: pointer;
   font-size: 10px; letter-spacing: .1em;
-  touch-action: none; user-select: none; -webkit-user-select: none;
+  touch-action: pan-y; user-select: none; -webkit-user-select: none;
 }
+.lib-row.lifting, .set-row.lifting { border-color: var(--sim); box-shadow: 0 0 10px hsl(16 100% 60% / .45); }
 .lib-row.on, .set-row.on { border-color: var(--chip-line); background: var(--chip-fill); }
 .lib-name { flex: 1; color: var(--ink); text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-rename {
+  flex: 1; min-width: 0; font-family: inherit; font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink); background: var(--well); border: 1px solid var(--sim); border-radius: 6px; padding: 4px 6px; outline: none;
+}
 .set-row.none .lib-name { color: var(--ink-dim); font-style: italic; }
 .set-row.onto { border-color: var(--sim); box-shadow: 0 0 10px hsl(16 100% 60% / .5); }
 .pc {
