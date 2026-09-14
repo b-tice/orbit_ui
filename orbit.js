@@ -1,68 +1,93 @@
-/* Orbit UI — assignment editor concept demo
-   Two primitives per axis: POINTS (define the CC response curve) and
-   SPANS (bands of travel where the curve is inactive: dead / freeze /
-   note-on). Live regions are the gaps between spans; each live region
-   owns a MIDI channel + CC number. */
+/* Orbit UI — Setup editor concept demo
+   v1.8 model: each axis is a span of travel (0–100%) holding ZONES.
+   Every zone has a type — Controller / Note / Switch / Freeze / Dead —
+   a travel range [lo,hi], and a color. Zones may OVERLAP: a second CC on
+   the same sweep is simply a second Controller zone laid over the first.
+   Controller zones own their transmit channel, CC number and their own
+   response curve (points; the first/last points are the zone's end points).
+   Dead zones are a MASK: they silence any Controller zone they overlap.
+   Travel with no zone at all is dead too. */
 
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.7';
+const APP_VERSION = '1.8';
 
-/* ── state ───────────────────────────────────────────────────────── */
+/* ── constants ───────────────────────────────────────────────────── */
 
 const STORE_KEY = 'orbit_ui_state_v1';
 let uidn = 1;
-const uid = () => 's' + (uidn++) + '_' + Math.random().toString(36).slice(2, 7);
+const uid = () => 'z' + (uidn++) + '_' + Math.random().toString(36).slice(2, 7);
 
-/* per-axis layer defaults: layer 1 = the classic demo shapes,
-   layer 2 = simple ramps on CH 2 so the ghost reads clearly */
-function defaultLayers(key) {
-  const mk = (points, spans, defCh, baseCC) =>
-    ({ smooth: false, defCh, baseCC, regions: [], points, spans });
-  if (key === 'yaw') return [
-    mk(
-      [{ x: 0.08, y: 0 }, { x: 0.27, y: 70 }, { x: 0.46, y: 127 },
-       { x: 0.54, y: 127 }, { x: 0.73, y: 70 }, { x: 0.92, y: 0 }],
-      [{ id: uid(), lo: 0.00, hi: 0.08, mode: 'dead', ch: 1, note: 60 },
-       { id: uid(), lo: 0.46, hi: 0.54, mode: 'dead', ch: 1, note: 60 },
-       { id: uid(), lo: 0.92, hi: 1.00, mode: 'dead', ch: 1, note: 60 }],
-      1, 11),
-    mk(
-      [{ x: 0.06, y: 0 }, { x: 0.94, y: 127 }],
-      [{ id: uid(), lo: 0.00, hi: 0.06, mode: 'dead', ch: 2, note: 60 },
-       { id: uid(), lo: 0.94, hi: 1.00, mode: 'dead', ch: 2, note: 60 }],
-      2, 21),
-  ];
-  return [
-    mk(
-      [{ x: 0.06, y: 0 }, { x: 0.5, y: 50 }, { x: 0.94, y: 127 }],
-      [{ id: uid(), lo: 0.00, hi: 0.06, mode: 'dead', ch: 1, note: 60 },
-       { id: uid(), lo: 0.94, hi: 1.00, mode: 'dead', ch: 1, note: 60 }],
-      1, 1),
-    mk(
-      [{ x: 0.06, y: 127 }, { x: 0.94, y: 0 }],
-      [{ id: uid(), lo: 0.00, hi: 0.06, mode: 'dead', ch: 2, note: 60 },
-       { id: uid(), lo: 0.94, hi: 1.00, mode: 'dead', ch: 2, note: 60 }],
-      2, 22),
-  ];
+const MIN_ZONE = 0.02;          /* narrowest zone, as a fraction of travel */
+const DEFAULT_SWITCH_SPEED = 250; /* % of travel per second */
+
+const ZONE_TYPES = [
+  { id: 'ctl',    icon: '🎚', label: 'Controller' },
+  { id: 'note',   icon: '🎵', label: 'Note' },
+  { id: 'switch', icon: '⚡', label: 'Switch' },
+  { id: 'freeze', icon: '❄️', label: 'Freeze' },
+  { id: 'dead',   icon: '🪦', label: 'Dead' },
+];
+const zoneType = id => ZONE_TYPES.find(t => t.id === id) || ZONE_TYPES[0];
+
+/* zone colors — indigo and magenta first (the v1.5 layer colors) */
+const PALETTE = [
+  { name: 'indigo',  c: '#818cf8', pt: '#e0e7ff' },
+  { name: 'magenta', c: '#e879f9', pt: '#fae8ff' },
+  { name: 'cyan',    c: '#22d3ee', pt: '#cffafe' },
+  { name: 'amber',   c: '#fbbf24', pt: '#fef3c7' },
+  { name: 'green',   c: '#4ade80', pt: '#dcfce7' },
+  { name: 'coral',   c: '#fb7185', pt: '#ffe4e6' },
+  { name: 'violet',  c: '#a78bfa', pt: '#ede9fe' },
+  { name: 'teal',    c: '#2dd4bf', pt: '#ccfbf1' },
+];
+const colorOf = z => PALETTE[(z.color || 0) % PALETTE.length];
+
+/* ── zone factory ────────────────────────────────────────────────── */
+
+/* Every zone carries the fields of every type, so switching a zone's type
+   back and forth never loses what the user typed. */
+function mkZone(type, lo, hi, extra) {
+  return Object.assign({
+    id: uid(), type, lo, hi, color: 0,
+    /* controller */
+    ch: 1, cc: 1, smooth: false,
+    points: [{ x: lo, y: 0 }, { x: hi, y: 127 }],
+    /* note + switch */
+    note: 60, vel: 100,
+    /* switch */
+    action: 'note', onVal: 127, offVal: 0, speed: DEFAULT_SWITCH_SPEED,
+  }, extra || {});
 }
 
-/* migrate pre-v1.5 single-layer axes ({points,spans,...} on the axis) */
-function migrateAxes(axes) {
-  for (const key of ['yaw', 'pitch']) {
-    const a = axes[key];
-    if (!a.layers) {
-      a.layers = [
-        { smooth: !!a.smooth, defCh: 1, baseCC: a.baseCC || 1,
-          regions: a.regions || [], points: a.points || [], spans: a.spans || [] },
-        defaultLayers(key)[1],
-      ];
-      delete a.points; delete a.spans; delete a.regions;
-      delete a.smooth; delete a.baseCC;
-    }
-  }
-  return axes;
+/* the least-used palette color among this axis's colored (non-dead) zones */
+function nextColor(axis) {
+  const counts = PALETTE.map(() => 0);
+  for (const z of axis.zones) if (z.type !== 'dead') counts[(z.color || 0) % PALETTE.length]++;
+  let best = 0;
+  for (let i = 1; i < counts.length; i++) if (counts[i] < counts[best]) best = i;
+  return best;
+}
+
+/* David's defaults: Yaw = Dead · CTL · Dead · CTL · Dead (bipolar Mid=Hi),
+   Pitch = Dead · CTL · Dead. */
+function defaultZones(key) {
+  if (key === 'yaw') return [
+    mkZone('dead', 0.00, 0.08),
+    mkZone('ctl', 0.08, 0.46, { color: 0, ch: 1, cc: 11,
+      points: [{ x: 0.08, y: 0 }, { x: 0.27, y: 70 }, { x: 0.46, y: 127 }] }),
+    mkZone('dead', 0.46, 0.54),
+    mkZone('ctl', 0.54, 0.92, { color: 1, ch: 1, cc: 11,
+      points: [{ x: 0.54, y: 127 }, { x: 0.73, y: 70 }, { x: 0.92, y: 0 }] }),
+    mkZone('dead', 0.92, 1.00),
+  ];
+  return [
+    mkZone('dead', 0.00, 0.06),
+    mkZone('ctl', 0.06, 0.94, { color: 0, ch: 1, cc: 1,
+      points: [{ x: 0.06, y: 0 }, { x: 0.5, y: 50 }, { x: 0.94, y: 127 }] }),
+    mkZone('dead', 0.94, 1.00),
+  ];
 }
 
 function defaultState() {
@@ -72,16 +97,14 @@ function defaultState() {
       yaw: {
         key: 'yaw', label: 'YAW', sub: 'left → right',
         endLabels: ['LEFT', 'RIGHT'], freeze: 'PITCH',
-        sim: 0.5, layers: defaultLayers('yaw'),
+        sim: 0.5, zones: defaultZones('yaw'),
       },
       pitch: {
         key: 'pitch', label: 'PITCH', sub: 'heel → toe',
         endLabels: ['HEEL', 'TOE'], freeze: 'YAW',
-        sim: 0.35, layers: defaultLayers('pitch'),
+        sim: 0.35, zones: defaultZones('pitch'),
       },
     },
-    activeLayer: 0,
-    layerOn: [true, false], /* layer 2 ships off until enabled */
     library: [],
     setlist: [],
     loadedId: null,
@@ -89,8 +112,62 @@ function defaultState() {
   };
 }
 
-/* the active layer of an axis */
-const act = axis => axis.layers[state.activeLayer];
+/* ── migration: layers (v1.5–v1.7) and pre-v1.5 axes → zones ─────── */
+
+/* gaps between a legacy layer's spans (the old "live regions") */
+function legacyRegions(ly) {
+  if (ly.regions && ly.regions.length) return ly.regions;
+  const gaps = [];
+  let t = 0, cc = ly.baseCC || 1;
+  for (const s of [...(ly.spans || [])].sort((a, b) => a.lo - b.lo)) {
+    if (s.lo > t + 0.01) gaps.push({ lo: t, hi: s.lo, ch: ly.defCh || 1, cc: cc++ });
+    t = Math.max(t, s.hi);
+  }
+  if (t < 0.99) gaps.push({ lo: t, hi: 1, ch: ly.defCh || 1, cc });
+  return gaps;
+}
+
+function layerToZones(ly, color) {
+  const zones = [];
+  for (const r of legacyRegions(ly)) {
+    const inside = [...(ly.points || [])]
+      .filter(p => p.x >= r.lo - 1e-6 && p.x <= r.hi + 1e-6)
+      .sort((a, b) => a.x - b.x);
+    const pts = inside.map(p => ({ x: p.x, y: p.y }));
+    const probe = { points: ly.points || [], smooth: !!ly.smooth };
+    if (!pts.length || pts[0].x > r.lo + 1e-6) pts.unshift({ x: r.lo, y: Math.round(curveValue(probe, r.lo)) });
+    if (pts[pts.length - 1].x < r.hi - 1e-6) pts.push({ x: r.hi, y: Math.round(curveValue(probe, r.hi)) });
+    pts[0].x = r.lo; pts[pts.length - 1].x = r.hi;
+    zones.push(mkZone('ctl', r.lo, r.hi, { color, ch: r.ch || 1, cc: r.cc || 1, smooth: !!ly.smooth, points: pts }));
+  }
+  for (const s of ly.spans || []) {
+    zones.push(mkZone(s.mode === 'freeze' ? 'freeze' : s.mode === 'note' ? 'note' : 'dead',
+      s.lo, s.hi, { color, ch: s.ch || 1, note: s.note ?? 60 }));
+  }
+  return zones;
+}
+
+/* in place: give every axis a zones[] (idempotent) */
+function migrateAxes(axes, layerOn) {
+  for (const key of ['yaw', 'pitch']) {
+    const a = axes[key];
+    if (a.zones) continue;
+    let zones = [];
+    if (a.layers) {
+      a.layers.forEach((ly, li) => {
+        if (li > 0 && layerOn && !layerOn[li]) return; /* an OFF layer is dropped */
+        zones = zones.concat(layerToZones(ly, li % PALETTE.length));
+      });
+    } else if (a.points || a.spans) {
+      zones = layerToZones({ points: a.points, spans: a.spans, regions: a.regions, smooth: a.smooth, baseCC: a.baseCC }, 0);
+    } else {
+      zones = defaultZones(key);
+    }
+    a.zones = zones;
+    delete a.layers; delete a.points; delete a.spans; delete a.regions; delete a.smooth; delete a.baseCC;
+  }
+  return axes;
+}
 
 let state = loadState();
 
@@ -104,10 +181,9 @@ function loadState() {
         s.setlist = s.setlist || [];
         if (s.loadedId === undefined) s.loadedId = null;
         if (s.globalCh === undefined) s.globalCh = 16;
-        migrateAxes(s.axes);
-        for (const en of s.library) if (en.axes) migrateAxes(en.axes);
-        if (s.activeLayer === undefined) s.activeLayer = 0;
-        if (!s.layerOn) s.layerOn = [true, false];
+        migrateAxes(s.axes, s.layerOn);
+        for (const en of s.library) if (en.axes) migrateAxes(en.axes, en.layerOn);
+        delete s.activeLayer; delete s.layerOn;
         return s;
       }
     }
@@ -119,82 +195,78 @@ function saveState() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
 }
 
-/* ── live regions (gaps between spans) ───────────────────────────── */
+/* ── zone queries ────────────────────────────────────────────────── */
 
-const MIN_SPAN = 0.02;
-const MIN_REGION = 0.01;
-
-function sortedSpans(axis) {
-  return [...axis.spans].sort((a, b) => a.lo - b.lo);
+const width = z => z.hi - z.lo;
+/* Draw order (bottom → top): Controller zones always sit underneath every
+   other zone type; within a type, widest first — so the narrowest ends up
+   on top and wins the tap. A Controller hidden under another is always
+   reachable through its CH·CC chip. */
+const rank = z => (z.type === 'ctl' ? 0 : 1);
+const drawOrder = axis => [...axis.zones].sort((a, b) => rank(a) - rank(b) || width(b) - width(a));
+const zoneById = (axis, id) => axis.zones.find(z => z.id === id) || null;
+const zonesAt = (axis, t) => axis.zones.filter(z => t >= z.lo - 1e-9 && t <= z.hi + 1e-9);
+/* Two overlapping Controller zones normally both send. If they share the
+   same transmit channel AND CC they would fight over one controller, so
+   the topmost (narrowest) one wins in the overlap and the other goes quiet. */
+const sameCC = (a, b) => a.type === 'ctl' && b.type === 'ctl' && a.ch === b.ch && a.cc === b.cc;
+const overlaps = (a, b) => a.hi > b.lo && a.lo < b.hi;
+function isAbove(axis, a, b) {           /* is a drawn on top of b? */
+  const o = drawOrder(axis);
+  return o.indexOf(a) > o.indexOf(b);
 }
-
-/* recompute live regions, carrying CH/CC settings over by best overlap */
-function syncRegions(axis) {
-  const old = axis.regions || [];
-  const gaps = [];
-  let t = 0;
-  for (const s of sortedSpans(axis)) {
-    if (s.lo > t + MIN_REGION) gaps.push({ lo: t, hi: s.lo });
-    t = Math.max(t, s.hi);
+/* zones that silence z: every non-Controller zone, plus same-CC Controllers above it */
+const blockers = (axis, z) => axis.zones.filter(o =>
+  o !== z && overlaps(o, z) && (o.type !== 'ctl' || (sameCC(o, z) && isAbove(axis, o, z))));
+/* is Controller zone z actually sending at travel t? */
+const ctlActive = (axis, z, t) =>
+  t >= z.lo && t <= z.hi && !blockers(axis, z).some(o => t >= o.lo && t <= o.hi);
+/* does z share channel+CC with another Controller it overlaps? (shown amber) */
+const ccConflict = (axis, z) => axis.zones.some(o => o !== z && overlaps(o, z) && sameCC(o, z));
+/* the parts of [z.lo,z.hi] where z is silenced, merged & sorted */
+function blockedRanges(axis, z) {
+  const iv = blockers(axis, z)
+    .map(o => ({ lo: Math.max(z.lo, o.lo), hi: Math.min(z.hi, o.hi) }))
+    .sort((a, b) => a.lo - b.lo);
+  const out = [];
+  for (const r of iv) {
+    if (out.length && r.lo <= out[out.length - 1].hi) out[out.length - 1].hi = Math.max(out[out.length - 1].hi, r.hi);
+    else out.push({ ...r });
   }
-  if (t < 1 - MIN_REGION) gaps.push({ lo: t, hi: 1 });
-
-  const used = new Set();
-  let nextCC = axis.baseCC;
-  const takenCC = old.map(r => r.cc);
-  axis.regions = gaps.map(g => {
-    let best = null, bestOv = 0;
-    old.forEach((r, i) => {
-      if (used.has(i)) return;
-      const ov = Math.min(g.hi, r.hi) - Math.max(g.lo, r.lo);
-      if (ov > bestOv) { bestOv = ov; best = i; }
-    });
-    if (best !== null) {
-      used.add(best);
-      return { lo: g.lo, hi: g.hi, ch: old[best].ch, cc: old[best].cc };
-    }
-    while (takenCC.includes(nextCC)) nextCC++;
-    takenCC.push(nextCC);
-    return { lo: g.lo, hi: g.hi, ch: axis.defCh || 1, cc: nextCC };
-  });
+  return out;
+}
+/* the topmost (narrowest) Controller zone under t, or null */
+function ctlAt(axis, t) {
+  const c = zonesAt(axis, t).filter(z => z.type === 'ctl');
+  if (!c.length) return null;
+  const order = drawOrder({ zones: c });   /* last drawn = on top */
+  return order[order.length - 1];
 }
 
-/* Linearly remap points whose x lies in a range's [oldLo,oldHi] to its
-   [newLo,newHi] — used so live-zone curves stretch with a moving span
-   boundary. Each point is classified once against its original x. */
-function remapPoints(axis, ranges) {
-  const eps = 1e-6;
-  for (const p of axis.points) {
-    for (const r of ranges) {
-      if (r.oldHi - r.oldLo > eps && p.x >= r.oldLo - eps && p.x <= r.oldHi + eps) {
-        const u = (p.x - r.oldLo) / (r.oldHi - r.oldLo);
-        p.x = r.newLo + u * (r.newHi - r.newLo);
-        break;
-      }
-    }
+/* ── curves ──────────────────────────────────────────────────────── */
+
+const sortedPoints = z => [...z.points].sort((a, b) => a.x - b.x);
+
+/* keep the first/last point pinned to the zone's end points */
+function normalizePoints(z) {
+  if (!z.points || z.points.length < 2) z.points = [{ x: z.lo, y: 0 }, { x: z.hi, y: 127 }];
+  const pts = sortedPoints(z);
+  pts[0].x = z.lo;
+  pts[pts.length - 1].x = z.hi;
+  for (let i = 1; i < pts.length - 1; i++) pts[i].x = Math.max(z.lo, Math.min(z.hi, pts[i].x));
+}
+const isEndPoint = (z, p) => {
+  const pts = sortedPoints(z);
+  return p === pts[0] || p === pts[pts.length - 1];
+};
+
+/* rescale a zone's points from [oldLo,oldHi] to [newLo,newHi] */
+function remapPoints(z, oldLo, oldHi, newLo, newHi) {
+  const span = oldHi - oldLo;
+  for (const p of z.points) {
+    const u = span > 1e-6 ? (p.x - oldLo) / span : 0;
+    p.x = newLo + Math.max(0, Math.min(1, u)) * (newHi - newLo);
   }
-}
-
-/* live-zone boundaries adjacent to span s: nearest other span edge (or 0/1) */
-function neighborBounds(axis, s) {
-  const others = sortedSpans(axis).filter(x => x.id !== s.id);
-  return {
-    left: others.reduce((b, o) => (o.hi <= s.lo + 1e-9 && o.hi > b ? o.hi : b), 0),
-    right: others.reduce((b, o) => (o.lo >= s.hi - 1e-9 && o.lo < b ? o.lo : b), 1),
-  };
-}
-
-function regionAt(axis, t) {
-  return axis.regions.find(r => t >= r.lo && t <= r.hi) || null;
-}
-function spanAt(axis, t) {
-  return sortedSpans(axis).find(s => t >= s.lo && t <= s.hi) || null;
-}
-
-/* ── curve evaluation ────────────────────────────────────────────── */
-
-function sortedPoints(axis) {
-  return [...axis.points].sort((a, b) => a.x - b.x);
 }
 
 /* monotone cubic hermite tangents (Fritsch–Carlson) */
@@ -219,8 +291,9 @@ function monotoneTangents(pts) {
   return m;
 }
 
-function curveValue(axis, t) {
-  const pts = sortedPoints(axis);
+/* value of a curve ({points, smooth}) at travel t */
+function curveValue(c, t) {
+  const pts = sortedPoints(c);
   if (!pts.length) return 0;
   if (t <= pts[0].x) return pts[0].y;
   if (t >= pts[pts.length - 1].x) return pts[pts.length - 1].y;
@@ -229,7 +302,7 @@ function curveValue(axis, t) {
   const p0 = pts[i], p1 = pts[i + 1];
   const h = Math.max(p1.x - p0.x, 1e-6);
   const u = (t - p0.x) / h;
-  if (!axis.smooth) return p0.y + (p1.y - p0.y) * u;
+  if (!c.smooth) return p0.y + (p1.y - p0.y) * u;
   const m = monotoneTangents(pts);
   const u2 = u * u, u3 = u2 * u;
   const y = (2 * u3 - 3 * u2 + 1) * p0.y + (u3 - 2 * u2 + u) * h * m[i]
@@ -243,11 +316,43 @@ function noteName(n) {
   return NOTE_NAMES[n % 12] + (Math.floor(n / 12) - 1);
 }
 const pct = t => (t * 100).toFixed(1) + '%';
+function clampi(v, lo, hi) {
+  if (isNaN(v)) return lo;
+  return Math.max(lo, Math.min(hi, Math.round(v)));
+}
+
+/* ── zone labels ─────────────────────────────────────────────────── */
+
+function zoneShortLabel(axis, z) {
+  if (z.type === 'dead') return 'DEAD';
+  if (z.type === 'freeze') return 'FRZ ' + axis.freeze;
+  if (z.type === 'note') return '♪ ' + noteName(z.note) + ' ch' + z.ch;
+  if (z.type === 'switch') return '⚡ ' + (z.action === 'cc' ? 'CC' + z.cc : noteName(z.note)) + ' ch' + z.ch;
+  return `CH${z.ch} · CC${z.cc}`;
+}
+
+/* what a zone does at the sim marker (null = nothing) */
+function zoneOutput(axis, z, t) {
+  if (z.type === 'ctl') {
+    if (!ctlActive(axis, z, t)) return null;
+    return `CC${z.cc} ch${z.ch}=${Math.round(curveValue(z, t))}`;
+  }
+  if (z.type === 'freeze') return `FRZ ${axis.freeze}`;
+  if (z.type === 'note') return `♪${noteName(z.note)} ch${z.ch} v${z.vel}`;
+  if (z.type === 'switch') {
+    const on = !!simSwitch[z.id];
+    return `⚡${z.action === 'cc' ? 'CC' + z.cc : noteName(z.note)} ${on ? 'ON' : 'off'}`;
+  }
+  return null;
+}
+
+/* runtime-only: which Switch zones the sim marker has toggled on */
+const simSwitch = {};
 
 /* ── geometry / rendering ────────────────────────────────────────── */
 
-const GEO = { left: 40, right: 14, top: 30, bottom: 44, height: 240, simLane: 16 };
-const editors = {}; // key -> {svg, wellDiv, outEl, smoothBtn}
+const GEO = { left: 40, right: 14, bottom: 44, height: 240, chipRow: 19 };
+const editors = {}; // key -> {svg, outEl}
 
 function buildPanels() {
   const main = document.getElementById('axes');
@@ -261,73 +366,64 @@ function buildPanels() {
         <div class="axis-title"><b>${axis.label}</b><small>${axis.sub}</small></div>
         <div class="axis-out"><span class="amb-led"></span><span data-out></span></div>
         <div class="axis-tools">
-          <button class="ghostbtn ${act(axis).smooth ? 'on' : ''}" data-smooth type="button" title="response curve: linear ↔ smooth">smooth</button>
-          <button class="ghostbtn" data-addspan type="button" title="add a zone (dead / freeze / note) in the widest controller zone">+ Zone</button>
+          <button class="ghostbtn" data-addzone type="button" title="add a zone — pick its type in the popover">+ Zone</button>
         </div>
       </div>
       <div class="editor-well"><svg data-axis="${key}"></svg></div>`;
     main.appendChild(panel);
     const svg = panel.querySelector('svg');
-    editors[key] = {
-      svg,
-      outEl: panel.querySelector('[data-out]'),
-      smoothBtn: panel.querySelector('[data-smooth]'),
-    };
-    panel.querySelector('[data-smooth]').addEventListener('click', () => {
-      const ly = act(axis);
-      ly.smooth = !ly.smooth;
-      editors[key].smoothBtn.classList.toggle('on', ly.smooth);
-      commit(axis);
-    });
-    panel.querySelector('[data-addspan]').addEventListener('click', () => addSpan(axis));
+    editors[key] = { svg, outEl: panel.querySelector('[data-out]') };
+    panel.querySelector('[data-addzone]').addEventListener('click', e => addZone(axis, e.clientX, e.clientY));
     wireEditor(svg, axis);
   }
+}
+
+/* chips for Controller zones sit above the strip; overlapping zones get
+   their chips on separate rows so nothing collides */
+function chipLayout(axis, g) {
+  const ctl = axis.zones.filter(z => z.type === 'ctl').sort((a, b) => a.lo - b.lo);
+  const rows = [];
+  const chips = ctl.map(z => {
+    const label = zoneShortLabel(axis, z);
+    const w = label.length * 6.4 + 16;
+    const cx = (g.tx(z.lo) + g.tx(z.hi)) / 2;
+    let row = rows.findIndex(right => right < cx - w / 2 - 4);
+    if (row < 0) { row = rows.length; rows.push(0); }
+    rows[row] = cx + w / 2;
+    return { z, label, w, cx, row };
+  });
+  return { chips, rows: Math.max(1, rows.length) };
 }
 
 function axisGeom(axis) {
   const svg = editors[axis.key].svg;
   const w = svg.clientWidth || svg.parentElement.clientWidth || 800;
-  const h = GEO.height;
   const x0 = GEO.left, x1 = w - GEO.right;
-  const y0 = GEO.top, y1 = h - GEO.bottom;
+  const tx = t => x0 + t * (x1 - x0);
+  /* chip rows decide how tall the header band is */
+  const probe = chipLayout(axis, { tx });
+  const top = 12 + probe.rows * GEO.chipRow + 4;
+  const h = GEO.height + (probe.rows - 1) * GEO.chipRow;
+  const y0 = top, y1 = h - GEO.bottom;
   return {
-    w, h, x0, x1, y0, y1,
-    tx: t => x0 + t * (x1 - x0),
+    w, h, x0, x1, y0, y1, tx,
     ty: v => y1 - (v / 127) * (y1 - y0),
     it: px => Math.max(0, Math.min(1, (px - x0) / (x1 - x0))),
     iv: py => Math.max(0, Math.min(127, (1 - (py - y0) / (y1 - y0)) * 127)),
   };
 }
 
-function spanShortLabel(axis, s) {
-  if (s.mode === 'dead') return 'DEAD';
-  if (s.mode === 'freeze') return 'FRZ ' + axis.freeze;
-  return '♪ ' + noteName(s.note) + ' ch' + s.ch;
-}
-
-const LAYER_COLORS = [
-  { trace: 'var(--trace)', dim: 'var(--trace-dim)', ptFill: 'var(--pt-fill)', ptStroke: 'var(--pt-stroke)', glow: '#6366f1' },
-  { trace: 'var(--l2-trace)', dim: 'var(--l2-trace-dim)', ptFill: 'var(--l2-pt-fill)', ptStroke: 'var(--l2-pt-stroke)', glow: '#d946ef' },
-];
-
 function render(axis) {
   const ed = editors[axis.key];
   const g = axisGeom(axis);
-  const li = state.activeLayer;
-  const ly = axis.layers[li];
-  const gi = 1 - li;
-  const gly = axis.layers[gi];
-  const C = LAYER_COLORS[li];
-  const GC = LAYER_COLORS[gi];
   const parts = [];
 
   parts.push(`<defs>
-    <filter id="glow-${axis.key}" x="-40%" y="-40%" width="180%" height="180%">
-      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="${C.glow}" flood-opacity="0.75"/>
-    </filter>
     <filter id="glow-sim-${axis.key}" x="-60%" y="-60%" width="220%" height="220%">
       <feDropShadow dx="0" dy="0" stdDeviation="2.5" flood-color="hsl(16 100% 60%)" flood-opacity="0.8"/>
     </filter>
+    ${PALETTE.map((p, i) => `<filter id="glow-${axis.key}-${i}" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="${p.c}" flood-opacity="0.7"/></filter>`).join('')}
   </defs>`);
 
   /* value gridlines + labels */
@@ -345,84 +441,87 @@ function render(axis) {
   parts.push(`<text x="${g.x0}" y="${g.h - 6}" font-size="9" letter-spacing="2">${axis.endLabels[0]}</text>`);
   parts.push(`<text x="${g.x1}" y="${g.h - 6}" font-size="9" letter-spacing="2" text-anchor="end">${axis.endLabels[1]}</text>`);
 
-  /* curve sampler for any layer */
-  const samplePath = (sl, lo, hi) => {
+  const samplePath = (z, lo, hi) => {
     const n = Math.max(2, Math.round((hi - lo) * 140));
     let dd = '';
     for (let i = 0; i <= n; i++) {
       const t = lo + (hi - lo) * (i / n);
-      dd += (i ? 'L' : 'M') + g.tx(t).toFixed(1) + ' ' + g.ty(curveValue(sl, t)).toFixed(1);
+      dd += (i ? 'L' : 'M') + g.tx(t).toFixed(1) + ' ' + g.ty(curveValue(z, t)).toFixed(1);
     }
     return dd;
   };
 
-  /* ghost of the other layer — seen through frosted glass (only when on) */
-  if (state.layerOn[gi]) {
-    const gp = [];
-    for (const s of sortedSpans(gly)) {
-      const xa = g.tx(s.lo), xb = g.tx(s.hi);
-      gp.push(`<rect x="${xa}" y="${g.y0}" width="${xb - xa}" height="${g.y1 - g.y0}" fill="var(--span-fill)"/>`);
-      gp.push(`<line x1="${xa + 1.5}" y1="${g.y0 + 6}" x2="${xa + 1.5}" y2="${g.y1 - 6}" stroke="${GC.trace}" stroke-width="2" stroke-linecap="round"/>`);
-      gp.push(`<line x1="${xb - 1.5}" y1="${g.y0 + 6}" x2="${xb - 1.5}" y2="${g.y1 - 6}" stroke="${GC.trace}" stroke-width="2" stroke-linecap="round"/>`);
+  /* zone bands — widest first so the narrowest is on top and wins the tap */
+  const order = drawOrder(axis);
+  const labelCx = [];   /* centers of labels already placed, to stack collisions */
+  for (const z of order) {
+    const xa = g.tx(z.lo), xb = g.tx(z.hi);
+    const col = colorOf(z);
+    const dead = z.type === 'dead';
+    const fill = dead ? 'var(--dead-fill)' : col.c;
+    const fillOp = dead ? 1 : (z.type === 'ctl' ? 0.09 : 0.16);
+    const edge = dead ? 'var(--dead-edge)' : col.c;
+    parts.push(`<rect x="${xa}" y="${g.y0}" width="${xb - xa}" height="${g.y1 - g.y0}" fill="${fill}" fill-opacity="${fillOp}" data-role="zone" data-id="${z.id}" style="cursor:grab"/>`);
+    parts.push(`<line x1="${xa + 1.5}" y1="${g.y0 + 6}" x2="${xa + 1.5}" y2="${g.y1 - 6}" stroke="${edge}" stroke-opacity="${dead ? 1 : 0.8}" stroke-width="3" stroke-linecap="round" pointer-events="none"/>`);
+    parts.push(`<line x1="${xb - 1.5}" y1="${g.y0 + 6}" x2="${xb - 1.5}" y2="${g.y1 - 6}" stroke="${edge}" stroke-opacity="${dead ? 1 : 0.8}" stroke-width="3" stroke-linecap="round" pointer-events="none"/>`);
+    if (z.type !== 'ctl') {
+      const cx = (xa + xb) / 2;
+      /* labels of overlapping zones stack downward instead of colliding */
+      const stack = labelCx.filter(x => Math.abs(x - cx) < 48).length;
+      labelCx.push(cx);
+      const cy = (g.y0 + g.y1) / 2 + stack * 14;
+      const wide = (xb - xa) > 54;
+      parts.push(`<text x="${cx}" y="${cy}" font-size="8" text-anchor="middle" class="zone-label" fill="${dead ? 'var(--dead-edge)' : col.c}" pointer-events="none" transform="${wide ? '' : `rotate(-90 ${cx} ${cy})`}">${zoneShortLabel(axis, z)}</text>`);
     }
-    gp.push(`<path d="${samplePath(gly, 0, 1)}" fill="none" stroke="${GC.dim}" stroke-width="1.5" stroke-dasharray="3 4"/>`);
-    for (const r of gly.regions) {
-      gp.push(`<path d="${samplePath(gly, r.lo, r.hi)}" fill="none" stroke="${GC.trace}" stroke-width="2.5" stroke-linecap="round"/>`);
-    }
-    for (const p of sortedPoints(gly)) {
-      gp.push(`<circle cx="${g.tx(p.x)}" cy="${g.ty(p.y)}" r="4" fill="${GC.ptFill}" stroke="${GC.ptStroke}" stroke-width="1.5"/>`);
-    }
-    parts.push(`<g style="filter:blur(2.3px);opacity:.45" pointer-events="none">${gp.join('')}</g>`);
+  }
+  /* edge handles, on top of every band */
+  for (const z of order) {
+    const xa = g.tx(z.lo), xb = g.tx(z.hi);
+    parts.push(`<rect x="${xa - 7}" y="${g.y0}" width="14" height="${g.y1 - g.y0}" fill="transparent" data-role="edge" data-id="${z.id}" data-side="lo" style="cursor:ew-resize"/>`);
+    parts.push(`<rect x="${xb - 7}" y="${g.y0}" width="14" height="${g.y1 - g.y0}" fill="transparent" data-role="edge" data-id="${z.id}" data-side="hi" style="cursor:ew-resize"/>`);
   }
 
-  /* spans (active layer) */
-  for (const s of sortedSpans(ly)) {
-    const xa = g.tx(s.lo), xb = g.tx(s.hi);
-    parts.push(`<rect x="${xa}" y="${g.y0}" width="${xb - xa}" height="${g.y1 - g.y0}" fill="var(--span-fill)" data-role="span" data-id="${s.id}" style="cursor:grab"/>`);
-    parts.push(`<line x1="${xa + 1.5}" y1="${g.y0 + 6}" x2="${xa + 1.5}" y2="${g.y1 - 6}" stroke="var(--span-edge)" stroke-width="3" stroke-linecap="round" pointer-events="none"/>`);
-    parts.push(`<line x1="${xb - 1.5}" y1="${g.y0 + 6}" x2="${xb - 1.5}" y2="${g.y1 - 6}" stroke="var(--span-edge)" stroke-width="3" stroke-linecap="round" pointer-events="none"/>`);
-    const cx = (xa + xb) / 2, cy = (g.y0 + g.y1) / 2;
-    const wide = (xb - xa) > 54;
-    const lbl = spanShortLabel(axis, s);
-    parts.push(`<text x="${cx}" y="${cy}" font-size="8" text-anchor="middle" class="span-label" pointer-events="none" transform="${wide ? '' : `rotate(-90 ${cx} ${cy})`}">${lbl}</text>`);
-    /* edge hit zones on top of body */
-    parts.push(`<rect x="${xa - 8}" y="${g.y0}" width="16" height="${g.y1 - g.y0}" fill="transparent" data-role="edge" data-id="${s.id}" data-side="lo" style="cursor:ew-resize"/>`);
-    parts.push(`<rect x="${xb - 8}" y="${g.y0}" width="16" height="${g.y1 - g.y0}" fill="transparent" data-role="edge" data-id="${s.id}" data-side="hi" style="cursor:ew-resize"/>`);
+  /* response curves + points, per Controller zone (same draw order) */
+  for (const z of order) {
+    if (z.type !== 'ctl') continue;
+    const col = colorOf(z);
+    const ci = (z.color || 0) % PALETTE.length;
+    /* solid where the zone is active, dotted where another zone type covers it */
+    let t0 = z.lo;
+    for (const b of blockedRanges(axis, z)) {
+      if (b.lo > t0 + 1e-6) parts.push(`<path d="${samplePath(z, t0, b.lo)}" fill="none" stroke="${col.c}" stroke-width="2.5" stroke-linecap="round" filter="url(#glow-${axis.key}-${ci})" pointer-events="none"/>`);
+      parts.push(`<path d="${samplePath(z, b.lo, b.hi)}" fill="none" stroke="${col.c}" stroke-opacity="0.55" stroke-width="1.8" stroke-dasharray="2 5" stroke-linecap="round" pointer-events="none"/>`);
+      t0 = b.hi;
+    }
+    if (z.hi > t0 + 1e-6) parts.push(`<path d="${samplePath(z, t0, z.hi)}" fill="none" stroke="${col.c}" stroke-width="2.5" stroke-linecap="round" filter="url(#glow-${axis.key}-${ci})" pointer-events="none"/>`);
+    for (const p of sortedPoints(z)) {
+      const x = g.tx(p.x), y = g.ty(p.y);
+      const idx = z.points.indexOf(p);
+      const quiet = !ctlActive(axis, z, p.x);
+      parts.push(`<circle cx="${x}" cy="${y}" r="${isEndPoint(z, p) ? 6.5 : 5.5}" fill="${col.pt}" stroke="${col.c}" stroke-width="2" opacity="${quiet ? 0.4 : 1}" filter="url(#glow-${axis.key}-${ci})" pointer-events="none"/>`);
+      parts.push(`<circle cx="${x}" cy="${y}" r="16" fill="transparent" data-role="point" data-id="${z.id}" data-idx="${idx}" style="cursor:grab"/>`);
+    }
   }
 
-  /* curve: dim base across full travel, bright overlay per live region */
-  parts.push(`<path d="${samplePath(ly, 0, 1)}" fill="none" stroke="${C.dim}" stroke-width="1.5" stroke-dasharray="3 4" pointer-events="none"/>`);
-  for (const r of ly.regions) {
-    parts.push(`<path d="${samplePath(ly, r.lo, r.hi)}" fill="none" stroke="${C.trace}" stroke-width="2.5" stroke-linecap="round" filter="url(#glow-${axis.key})" pointer-events="none"/>`);
-  }
-
-  /* region chips */
-  ly.regions.forEach((r, i) => {
-    const cx = (g.tx(r.lo) + g.tx(r.hi)) / 2;
-    const label = `CH${r.ch} · CC${r.cc}`;
-    const wch = label.length * 6.4 + 16;
-    parts.push(`<g data-role="region" data-idx="${i}" style="cursor:pointer">
-      <rect x="${cx - wch / 2}" y="6" width="${wch}" height="17" rx="8.5" fill="var(--chip-fill)" stroke="${C.trace}" stroke-opacity="0.55"/>
-      <text x="${cx}" y="18" font-size="8" text-anchor="middle" class="chip-label">${label}</text>
+  /* chips */
+  const { chips } = chipLayout(axis, g);
+  for (const c of chips) {
+    const col = colorOf(c.z);
+    const y = 6 + c.row * GEO.chipRow;
+    const warn = ccConflict(axis, c.z);   /* amber: shares CH+CC with an overlapping Controller */
+    parts.push(`<g data-role="chip" data-id="${c.z.id}" style="cursor:pointer">${warn ? `<title>overlaps another Controller on the same channel and CC — the topmost one wins</title>` : ''}
+      <rect x="${c.cx - c.w / 2}" y="${y}" width="${c.w}" height="17" rx="8.5" fill="${warn ? 'var(--warn-fill)' : 'var(--chip-fill)'}" stroke="${warn ? 'var(--warn)' : col.c}" stroke-opacity="${warn ? 1 : 0.7}"/>
+      <circle cx="${c.cx - c.w / 2 + 9}" cy="${y + 8.5}" r="3" fill="${col.c}"/>
+      <text x="${c.cx + 4}" y="${y + 12}" font-size="8" text-anchor="middle" class="chip-label">${c.label}</text>
     </g>`);
-  });
-
-  /* points */
-  const pts = sortedPoints(ly);
-  pts.forEach(p => {
-    const inSpan = !!spanAt(ly, p.x);
-    const x = g.tx(p.x), y = g.ty(p.y);
-    const idx = ly.points.indexOf(p);
-    parts.push(`<circle cx="${x}" cy="${y}" r="6" fill="${C.ptFill}" stroke="${C.ptStroke}" stroke-width="2" opacity="${inSpan ? 0.35 : 1}" filter="url(#glow-${axis.key})" pointer-events="none"/>`);
-    parts.push(`<circle cx="${x}" cy="${y}" r="17" fill="transparent" data-role="point" data-idx="${idx}" style="cursor:grab"/>`);
-  });
+  }
 
   /* sim marker */
   const sx = g.tx(axis.sim);
   parts.push(`<line x1="${sx}" y1="${g.y0}" x2="${sx}" y2="${g.y1 + 8}" stroke="var(--sim)" stroke-width="1" opacity="0.65" pointer-events="none"/>`);
-  const live = !spanAt(ly, axis.sim);
-  if (live) {
-    const sy = g.ty(curveValue(ly, axis.sim));
+  for (const z of axis.zones) {
+    if (z.type !== 'ctl' || !ctlActive(axis, z, axis.sim)) continue;
+    const sy = g.ty(curveValue(z, axis.sim));
     parts.push(`<circle cx="${sx}" cy="${sy}" r="3.5" fill="var(--sim)" filter="url(#glow-sim-${axis.key})" pointer-events="none"/>`);
   }
   parts.push(`<path d="M${sx - 7} ${g.y1 + 20} L${sx + 7} ${g.y1 + 20} L${sx} ${g.y1 + 9} Z" fill="var(--sim)" filter="url(#glow-sim-${axis.key})" data-role="sim" style="cursor:ew-resize"/>`);
@@ -433,24 +532,16 @@ function render(axis) {
   ed.svg.setAttribute('height', g.h);
   ed.svg.innerHTML = parts.join('');
 
-  /* output readout (active layer) */
-  const tag = `L${li + 1}·`;
-  if (!state.layerOn[li]) {
-    ed.outEl.textContent = `L${li + 1} OFF`;
-    return;
-  }
-  const s = spanAt(ly, axis.sim);
-  if (!s) {
-    const r = regionAt(ly, axis.sim);
-    const v = Math.round(curveValue(ly, axis.sim));
-    ed.outEl.textContent = tag + (r ? `CH${r.ch} CC${r.cc} → ${v}` : `→ ${v}`);
-  } else if (s.mode === 'dead') ed.outEl.textContent = tag + 'DEAD';
-  else if (s.mode === 'freeze') ed.outEl.textContent = tag + `FREEZE ${axis.freeze}`;
-  else ed.outEl.textContent = tag + `NOTE ${noteName(s.note)} CH${s.ch}`;
+  /* output readout: every active output at the marker */
+  const outs = zonesAt(axis, axis.sim)
+    .sort((a, b) => a.lo - b.lo)
+    .map(z => zoneOutput(axis, z, axis.sim))
+    .filter(Boolean);
+  ed.outEl.textContent = outs.length ? outs.join(' · ') : 'DEAD';
 }
 
 function commit(axis) {
-  for (const ly of axis.layers) syncRegions(ly);
+  for (const z of axis.zones) if (z.type === 'ctl') normalizePoints(z);
   render(axis);
   saveState();
 }
@@ -460,6 +551,7 @@ function commit(axis) {
 function wireEditor(svg, axis) {
   let drag = null;
   let lastTap = { time: 0, x: 0, y: 0 };
+  let simTrack = { t: axis.sim, time: 0 };
 
   const evPos = e => {
     const rect = svg.getBoundingClientRect();
@@ -475,13 +567,13 @@ function wireEditor(svg, axis) {
       idx: el ? +el.dataset.idx : -1,
       side: el ? el.dataset.side : null,
       startPx: px, startPy: py, moved: false,
-      clientX: e.clientX, clientY: e.clientY,
       pointerType: e.pointerType,
     };
-    if (drag.role === 'span') {
-      const s = act(axis).spans.find(x => x.id === drag.id);
-      drag.spanLo = s.lo; drag.spanHi = s.hi;
+    if (drag.role === 'zone') {
+      const z = zoneById(axis, drag.id);
+      if (z) { drag.zLo = z.lo; drag.zHi = z.hi; drag.pts = z.points.map(p => p.x); }
     }
+    if (drag.role === 'sim') simTrack = { t: axis.sim, time: performance.now() };
     svg.setPointerCapture(e.pointerId);
     if (drag.role !== 'bg') e.preventDefault();
   });
@@ -494,53 +586,35 @@ function wireEditor(svg, axis) {
     const g = axisGeom(axis);
     const t = g.it(px);
 
-    const ly = act(axis);
     if (drag.role === 'point') {
-      const p = ly.points[drag.idx];
-      if (p) { p.x = t; p.y = Math.round(g.iv(py)); commit(axis); }
-    } else if (drag.role === 'edge') {
-      const s = ly.spans.find(x => x.id === drag.id);
-      if (s) {
-        const others = sortedSpans(ly).filter(x => x.id !== s.id);
-        const nb = neighborBounds(ly, s);
-        if (drag.side === 'lo') {
-          let lo = Math.min(t, s.hi - MIN_SPAN);
-          for (const o of others) if (o.hi <= s.hi && o.hi > lo) lo = o.hi;
-          lo = Math.max(0, lo);
-          remapPoints(ly, [{ oldLo: nb.left, oldHi: s.lo, newLo: nb.left, newHi: lo }]);
-          s.lo = lo;
-        } else {
-          let hi = Math.max(t, s.lo + MIN_SPAN);
-          for (const o of others) if (o.lo >= s.lo && o.lo < hi) hi = o.lo;
-          hi = Math.min(1, hi);
-          remapPoints(ly, [{ oldLo: s.hi, oldHi: nb.right, newLo: hi, newHi: nb.right }]);
-          s.hi = hi;
-        }
+      const z = zoneById(axis, drag.id);
+      const p = z && z.points[drag.idx];
+      if (p) {
+        if (!isEndPoint(z, p)) p.x = Math.max(z.lo, Math.min(z.hi, t));
+        p.y = Math.round(g.iv(py));
         commit(axis);
       }
-    } else if (drag.role === 'span') {
-      const s = ly.spans.find(x => x.id === drag.id);
-      if (s) {
-        const wSpan = drag.spanHi - drag.spanLo;
-        let lo = drag.spanLo + (t - g.it(drag.startPx));
-        let hi = lo + wSpan;
-        for (const o of sortedSpans(ly)) {
-          if (o.id === s.id) continue;
-          if (o.hi <= drag.spanLo + 1e-9 && lo < o.hi) { lo = o.hi; hi = lo + wSpan; }
-          if (o.lo >= drag.spanHi - 1e-9 && hi > o.lo) { hi = o.lo; lo = hi - wSpan; }
-        }
-        if (lo < 0) { lo = 0; hi = wSpan; }
-        if (hi > 1) { hi = 1; lo = 1 - wSpan; }
-        const nb = neighborBounds(ly, s);
-        remapPoints(ly, [
-          { oldLo: nb.left, oldHi: s.lo, newLo: nb.left, newHi: lo },
-          { oldLo: s.hi, oldHi: nb.right, newLo: hi, newHi: nb.right },
-        ]);
-        s.lo = lo; s.hi = hi;
+    } else if (drag.role === 'edge') {
+      const z = zoneById(axis, drag.id);
+      if (z) {
+        const oldLo = z.lo, oldHi = z.hi;
+        if (drag.side === 'lo') z.lo = Math.max(0, Math.min(t, z.hi - MIN_ZONE));
+        else z.hi = Math.min(1, Math.max(t, z.lo + MIN_ZONE));
+        remapPoints(z, oldLo, oldHi, z.lo, z.hi);
+        commit(axis);
+      }
+    } else if (drag.role === 'zone') {
+      const z = zoneById(axis, drag.id);
+      if (z) {
+        const w = drag.zHi - drag.zLo;
+        let lo = drag.zLo + (t - g.it(drag.startPx));
+        lo = Math.max(0, Math.min(1 - w, lo));
+        z.lo = lo; z.hi = lo + w;
+        z.points.forEach((p, i) => { p.x = drag.pts[i] + (lo - drag.zLo); });
         commit(axis);
       }
     } else if (drag.role === 'sim') {
-      axis.sim = t;
+      simMove(axis, t, simTrack);
       render(axis);
     }
   });
@@ -553,13 +627,12 @@ function wireEditor(svg, axis) {
 
     /* tap (no drag) */
     const { px, py } = evPos(e);
-    if (d.role === 'point') { openPointPopover(axis, d.idx, e.clientX, e.clientY); return; }
-    if (d.role === 'span' || d.role === 'edge') {
-      const s = act(axis).spans.find(x => x.id === d.id);
-      if (s) openSpanPopover(axis, s, e.clientX, e.clientY);
+    if (d.role === 'point') { openPointPopover(axis, d.id, d.idx, e.clientX, e.clientY); return; }
+    if (d.role === 'zone' || d.role === 'edge' || d.role === 'chip') {
+      const z = zoneById(axis, d.id);
+      if (z) openZonePopover(axis, z, e.clientX, e.clientY);
       return;
     }
-    if (d.role === 'region') { openRegionPopover(axis, d.idx, e.clientX, e.clientY); return; }
 
     /* background tap: double-tap adds a point (touch path) */
     const now = Date.now();
@@ -576,33 +649,52 @@ function wireEditor(svg, axis) {
   svg.addEventListener('dblclick', e => {
     const el = e.target.closest('[data-role]');
     const role = el ? el.dataset.role : 'bg';
-    if (role !== 'bg') return; /* only add points in open live areas */
+    if (role !== 'bg' && role !== 'zone' && role !== 'edge') return;
     const { px, py } = evPos(e);
     addPointAt(axis, px, py);
   });
 }
 
+/* the sim marker moving: Switch zones fire on a fast ENTRY, toggling on/off;
+   the marker must leave the zone before it can fire again */
+function simMove(axis, t, track) {
+  const now = performance.now();
+  const dt = (now - track.time) / 1000;
+  const speed = dt > 0 ? Math.abs(t - track.t) * 100 / dt : 0;   /* % of travel per second */
+  for (const z of axis.zones) {
+    if (z.type !== 'switch') continue;
+    const wasIn = track.t >= z.lo && track.t <= z.hi;
+    const nowIn = t >= z.lo && t <= z.hi;
+    if (!wasIn && nowIn && speed >= z.speed) simSwitch[z.id] = !simSwitch[z.id];
+  }
+  track.t = t; track.time = now;
+  axis.sim = t;
+}
+
+/* add a curve point to the topmost Controller zone under the pointer */
 function addPointAt(axis, px, py) {
   const g = axisGeom(axis);
   if (py < g.y0 - 6 || py > g.y1 + 6) return;
   const t = g.it(px);
-  act(axis).points.push({ x: t, y: Math.round(g.iv(py)) });
+  const z = ctlAt(axis, t);
+  if (!z) return;
+  z.points.push({ x: t, y: Math.round(g.iv(py)) });
   commit(axis);
 }
 
-function addSpan(axis) {
-  /* drop the new span in the middle of the widest live gap */
-  const ly = act(axis);
-  syncRegions(ly);
-  let best = null;
-  for (const r of ly.regions) {
-    if (!best || (r.hi - r.lo) > (best.hi - best.lo)) best = r;
-  }
-  if (!best || best.hi - best.lo < MIN_SPAN * 3) return;
-  const wSpan = Math.min(0.1, (best.hi - best.lo) * 0.34);
-  const mid = (best.lo + best.hi) / 2;
-  ly.spans.push({ id: uid(), lo: mid - wSpan / 2, hi: mid + wSpan / 2, mode: 'dead', ch: ly.defCh || 1, note: 60 });
+/* + Zone: a new Controller zone over the middle third, on top, in the next
+   color; its popover opens so the type can be picked right away */
+function addZone(axis, cx, cy) {
+  const z = mkZone('ctl', 0.33, 0.67, { color: nextColor(axis), ch: 1, cc: nextCC(axis) });
+  axis.zones.push(z);
   commit(axis);
+  openZonePopover(axis, z, cx, cy);
+}
+function nextCC(axis) {
+  const used = new Set(axis.zones.filter(z => z.type === 'ctl').map(z => z.cc));
+  let cc = 1;
+  while (used.has(cc)) cc++;
+  return Math.min(cc, 127);
 }
 
 /* ── popover ─────────────────────────────────────────────────────── */
@@ -638,111 +730,133 @@ function closePopover() {
   if (popCleanup) { popCleanup(); popCleanup = null; }
 }
 
-function numRow(label, id, val, min, max) {
+function numRow(label, id, val, min, max, attrs) {
   return `<div class="pop-row"><label>${label}</label>
-    <input id="${id}" type="number" inputmode="numeric" value="${val}" min="${min}" max="${max}"></div>`;
+    <input id="${id}" type="number" inputmode="numeric" value="${val}" min="${min}" max="${max}" ${attrs || ''}></div>`;
+}
+/* wire a numeric input: fn(value) then commit */
+function wireNum(axis, id, fn) {
+  const el = pop.querySelector('#' + id);
+  if (el) el.addEventListener('input', () => { const v = parseFloat(el.value); if (!isNaN(v)) { fn(v); commit(axis); } });
 }
 
-function openPointPopover(axis, idx, cx, cy) {
-  const ly = act(axis);
-  const p = ly.points[idx];
+function openPointPopover(axis, zid, idx, cx, cy) {
+  const z = zoneById(axis, zid);
+  const p = z && z.points[idx];
   if (!p) return;
-  const region = regionAt(ly, p.x);
+  const end = isEndPoint(z, p);
+  const col = colorOf(z);
   openPopover(`
-    <h3><span class="amb-led"></span>Point</h3>
+    <h3><span class="amb-led" style="--amb-led-color:${col.c}"></span>${end ? 'End point' : 'Point'}
+      <span class="pop-note">CH${z.ch} · CC${z.cc}</span></h3>
     <div class="pop-rows">
-      ${numRow('Travel %', 'ppx', (p.x * 100).toFixed(1), 0, 100)}
+      ${numRow('Travel %', 'ppx', (p.x * 100).toFixed(1), 0, 100, end ? 'readonly' : '')}
       ${numRow('Value', 'ppy', Math.round(p.y), 0, 127)}
+      ${end ? '<div class="pop-note">end points follow the zone\'s edges — drag the edge to move it</div>'
+            : '<button class="dangerbtn" id="pdel" type="button">delete point</button>'}
+    </div>`, cx, cy);
+  if (!end) wireNum(axis, 'ppx', v => { p.x = Math.max(z.lo, Math.min(z.hi, v / 100)); });
+  wireNum(axis, 'ppy', v => { p.y = clampi(v, 0, 127); });
+  const del = pop.querySelector('#pdel');
+  if (del) del.addEventListener('click', () => { z.points.splice(idx, 1); closePopover(); commit(axis); });
+}
+
+function openZonePopover(axis, z, cx, cy) {
+  const col = colorOf(z);
+  const typeOrder = ['ctl', 'note', 'switch', 'dead', 'freeze'];   /* Freeze last: it gets the full-width button */
+  const typeBtns = typeOrder.map(zoneType).map(t => `
+    <button class="type-btn ${t.id === 'freeze' ? 'wide' : ''} ${z.type === t.id ? 'on' : ''}" data-type="${t.id}" type="button" title="${t.label}">
+      <span class="ico">${t.icon}</span>${t.id === 'freeze' ? 'Freeze ' + axis.freeze + ' value' : t.label}
+    </button>`).join('');
+  const swatches = PALETTE.map((p, i) => `
+    <button class="swatch ${((z.color || 0) % PALETTE.length) === i ? 'on' : ''}" data-color="${i}" type="button"
+      style="--sw:${p.c}" title="${p.name}"></button>`).join('');
+
+  let rows = '';
+  if (z.type === 'ctl') {
+    rows = `${numRow('Transmit ch', 'zch', z.ch, 1, 16)}
+      ${numRow('CC #', 'zcc', z.cc, 0, 127)}
+      <div class="pop-row"><label>Response curve</label>
+        <button class="ghostbtn ${z.smooth ? 'on' : ''}" id="zsmooth" type="button" title="linear ↔ smooth (monotone cubic) interpolation between the points">smooth</button></div>
+      <div class="pop-note">drag the end points to set the output range · double-click the curve to add points</div>
+      ${ccConflict(axis, z) ? '<div class="pop-note warn">overlaps another controller zone on the same channel + CC — where they overlap only the topmost (narrowest) one sends</div>' : ''}`;
+  } else if (z.type === 'note') {
+    rows = `${numRow('Transmit ch', 'zch', z.ch, 1, 16)}
+      ${numRow('Note #', 'znote', z.note, 0, 127)}
+      <div class="pop-row"><label>Note</label><span class="pop-note" id="znName">${noteName(z.note)}</span></div>
+      ${numRow('Velocity', 'zvel', z.vel, 1, 127)}
+      <div class="pop-note">note on when the pedal enters the zone, note off when it leaves</div>`;
+  } else if (z.type === 'switch') {
+    rows = `<div class="pop-row"><label>Action</label>
+        <div class="seg"><button class="${z.action !== 'cc' ? 'on' : ''}" data-action="note" type="button">Note</button><button class="${z.action === 'cc' ? 'on' : ''}" data-action="cc" type="button">CC</button></div></div>
+      ${numRow('Transmit ch', 'zch', z.ch, 1, 16)}
+      ${z.action === 'cc'
+        ? `${numRow('CC #', 'zcc', z.cc, 0, 127)}${numRow('On value', 'zon', z.onVal, 0, 127)}${numRow('Off value', 'zoff', z.offVal, 0, 127)}`
+        : `${numRow('Note #', 'znote', z.note, 0, 127)}
+           <div class="pop-row"><label>Note</label><span class="pop-note" id="znName">${noteName(z.note)}</span></div>
+           ${numRow('Velocity', 'zvel', z.vel, 1, 127)}`}
+      ${numRow('Speed %/s', 'zspeed', z.speed, 50, 1000)}
+      <div class="pop-note">a fast entry (faster than Speed) toggles on / off · slow entry does nothing</div>`;
+  } else if (z.type === 'freeze') {
+    rows = `<div class="pop-note">while the pedal is in this zone the ${axis.freeze} value is held</div>`;
+  } else {
+    rows = `<div class="pop-note">travel here is ignored — this zone masks any controller zone underneath it</div>`;
+  }
+
+  openPopover(`
+    <h3><span class="amb-led" style="--amb-led-color:${z.type === 'dead' ? '#6b7280' : col.c}"></span>${zoneType(z.type).icon} ${zoneType(z.type).label} zone</h3>
+    <div class="pop-rows">
+      <div class="type-list">${typeBtns}</div>
+      <div class="pop-row"><label>Range %</label>
+        <span class="pair"><input id="zlo" type="number" inputmode="numeric" value="${(z.lo * 100).toFixed(1)}" min="0" max="100">–<input id="zhi" type="number" inputmode="numeric" value="${(z.hi * 100).toFixed(1)}" min="0" max="100"></span></div>
+      ${z.type === 'dead' ? '' : `<div class="pop-row"><label>Color</label><div class="swatches">${swatches}</div></div>`}
       <hr class="pop-sep">
-      ${region
-        ? `${numRow('Transmit ch', 'pch', region.ch, 1, 16)}${numRow('CC #', 'pcc', region.cc, 0, 127)}`
-        : `<div class="pop-note">point sits inside a zone<br>(response curve inactive here)</div>`}
-      <button class="dangerbtn" id="pdel" type="button">delete point</button>
+      ${rows}
+      <button class="dangerbtn" id="zdel" type="button">delete zone</button>
     </div>`, cx, cy);
 
-  const wire = (id, fn) => {
-    const el = pop.querySelector('#' + id);
-    if (el) el.addEventListener('input', () => { fn(parseFloat(el.value)); commit(axis); });
+  const reopen = () => { closePopover(); openZonePopover(axis, z, cx, cy); };
+  pop.querySelectorAll('.type-btn').forEach(b => b.addEventListener('click', () => {
+    z.type = b.dataset.type;
+    if (z.type === 'ctl') normalizePoints(z);
+    commit(axis); reopen();
+  }));
+  pop.querySelectorAll('.swatch').forEach(b => b.addEventListener('click', () => {
+    z.color = +b.dataset.color; commit(axis); reopen();
+  }));
+  pop.querySelectorAll('[data-action]').forEach(b => b.addEventListener('click', () => {
+    z.action = b.dataset.action; commit(axis); reopen();
+  }));
+  const setRange = (lo, hi) => {
+    lo = Math.max(0, Math.min(1, lo)); hi = Math.max(0, Math.min(1, hi));
+    if (hi - lo < MIN_ZONE) return;
+    remapPoints(z, z.lo, z.hi, lo, hi);
+    z.lo = lo; z.hi = hi;
   };
-  wire('ppx', v => { if (!isNaN(v)) p.x = Math.max(0, Math.min(1, v / 100)); });
-  wire('ppy', v => { if (!isNaN(v)) p.y = Math.max(0, Math.min(127, Math.round(v))); });
-  wire('pch', v => { if (region && !isNaN(v)) region.ch = clampi(v, 1, 16); });
-  wire('pcc', v => { if (region && !isNaN(v)) region.cc = clampi(v, 0, 127); });
-  pop.querySelector('#pdel').addEventListener('click', () => {
-    ly.points.splice(idx, 1);
+  wireNum(axis, 'zlo', v => setRange(v / 100, z.hi));
+  wireNum(axis, 'zhi', v => setRange(z.lo, v / 100));
+  wireNum(axis, 'zch', v => { z.ch = clampi(v, 1, 16); });
+  wireNum(axis, 'zcc', v => { z.cc = clampi(v, 0, 127); });
+  wireNum(axis, 'zvel', v => { z.vel = clampi(v, 1, 127); });
+  wireNum(axis, 'zon', v => { z.onVal = clampi(v, 0, 127); });
+  wireNum(axis, 'zoff', v => { z.offVal = clampi(v, 0, 127); });
+  wireNum(axis, 'zspeed', v => { z.speed = clampi(v, 50, 1000); });
+  wireNum(axis, 'znote', v => {
+    z.note = clampi(v, 0, 127);
+    const nm = pop.querySelector('#znName');
+    if (nm) nm.textContent = noteName(z.note);
+  });
+  const sm = pop.querySelector('#zsmooth');
+  if (sm) sm.addEventListener('click', () => { z.smooth = !z.smooth; sm.classList.toggle('on', z.smooth); commit(axis); });
+  pop.querySelector('#zdel').addEventListener('click', () => {
+    axis.zones = axis.zones.filter(x => x.id !== z.id);
+    delete simSwitch[z.id];
     closePopover();
     commit(axis);
   });
 }
 
-function openSpanPopover(axis, s, cx, cy) {
-  const modes = [
-    { id: 'dead', label: 'Dead' },
-    { id: 'freeze', label: `Freeze ${axis.freeze} value` },
-    { id: 'note', label: 'Send MIDI note' },
-  ];
-  const noteRows = s.mode === 'note'
-    ? `${numRow('Transmit ch', 'sch', s.ch, 1, 16)}
-       ${numRow('Note #', 'snote', s.note, 0, 127)}
-       <div class="pop-row"><label>Note</label><span class="pop-note" id="snName">${noteName(s.note)}</span></div>`
-    : '';
-  openPopover(`
-    <h3><span class="amb-led"></span>Zone &nbsp;<span class="pop-note">${pct(s.lo)} – ${pct(s.hi)}</span></h3>
-    <div class="pop-rows">
-      <div class="mode-list">
-        ${modes.map(m => `<button class="mode-btn ${s.mode === m.id ? 'on' : ''}" data-mode="${m.id}" type="button"><span class="dot"></span>${m.label}</button>`).join('')}
-      </div>
-      ${noteRows}
-      <button class="dangerbtn" id="sdel" type="button">delete zone</button>
-    </div>`, cx, cy);
-
-  pop.querySelectorAll('.mode-btn').forEach(b => {
-    b.addEventListener('click', () => {
-      s.mode = b.dataset.mode;
-      commit(axis);
-      closePopover();
-      openSpanPopover(axis, s, cx, cy); /* refresh contents */
-    });
-  });
-  const sch = pop.querySelector('#sch');
-  if (sch) sch.addEventListener('input', () => { s.ch = clampi(parseFloat(sch.value), 1, 16); commit(axis); });
-  const snote = pop.querySelector('#snote');
-  if (snote) snote.addEventListener('input', () => {
-    s.note = clampi(parseFloat(snote.value), 0, 127);
-    const nm = pop.querySelector('#snName');
-    if (nm) nm.textContent = noteName(s.note);
-    commit(axis);
-  });
-  pop.querySelector('#sdel').addEventListener('click', () => {
-    const ly = act(axis);
-    ly.spans = ly.spans.filter(x => x.id !== s.id);
-    closePopover();
-    commit(axis);
-  });
-}
-
-function openRegionPopover(axis, idx, cx, cy) {
-  const r = act(axis).regions[idx];
-  if (!r) return;
-  openPopover(`
-    <h3><span class="amb-led"></span>Controller zone &nbsp;<span class="pop-note">${pct(r.lo)} – ${pct(r.hi)}</span></h3>
-    <div class="pop-rows">
-      ${numRow('Transmit ch', 'rch', r.ch, 1, 16)}
-      ${numRow('CC #', 'rcc', r.cc, 0, 127)}
-      <div class="pop-note">sends this CC on this channel while the pedal travels the zone</div>
-    </div>`, cx, cy);
-  const rch = pop.querySelector('#rch');
-  rch.addEventListener('input', () => { r.ch = clampi(parseFloat(rch.value), 1, 16); commit(axis); });
-  const rcc = pop.querySelector('#rcc');
-  rcc.addEventListener('input', () => { r.cc = clampi(parseFloat(rcc.value), 0, 127); commit(axis); });
-}
-
-function clampi(v, lo, hi) {
-  if (isNaN(v)) return lo;
-  return Math.max(lo, Math.min(hi, Math.round(v)));
-}
-
-/* ── librarian: program library + drag-ordered setlist ───────────── */
+/* ── librarian: Setup library + drag-ordered Set List ────────────── */
 
 const libListEl = document.getElementById('libList');
 const setListEl = document.getElementById('setList');
@@ -750,7 +864,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 
 function libEntry(id) { return state.library.find(x => x.id === id) || null; }
 
-/* the loaded program's 1-based setlist position (its PC number), or null */
+/* the loaded Setup's 1-based Set List position (its PC number), or null */
 function loadedPC() {
   const i = state.setlist.indexOf(state.loadedId);
   return i >= 0 ? i + 1 : null;
@@ -763,9 +877,9 @@ function saveProgram(asNew) {
   if (entry) {
     entry.name = name;
     entry.axes = snapshotAxes();
-    entry.layerOn = [...state.layerOn];
+    delete entry.layerOn;
   } else {
-    entry = { id: uid(), name, axes: snapshotAxes(), layerOn: [...state.layerOn] };
+    entry = { id: uid(), name, axes: snapshotAxes() };
     state.library.push(entry);
     state.loadedId = entry.id;
   }
@@ -776,12 +890,10 @@ function saveProgram(asNew) {
 function loadProgram(id) {
   const entry = libEntry(id);
   if (!entry) return;
-  state.axes = migrateAxes(JSON.parse(JSON.stringify(entry.axes)));
-  state.layerOn = entry.layerOn ? [...entry.layerOn] : [true, false];
+  state.axes = migrateAxes(JSON.parse(JSON.stringify(entry.axes)), entry.layerOn);
   state.program.name = entry.name;
   state.loadedId = id;
   progName.value = entry.name;
-  updateLayerTabs();
   buildPanels();
   for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
   renderLibrarian();
@@ -863,7 +975,7 @@ setListEl.addEventListener('click', e => {
 
 /* pointer-based row drag — grab anywhere on a bar (buttons excluded).
    A ~6px movement threshold separates a drag from a tap-to-load.
-   library → setlist inserts · setlist ↕ reorders · setlist → library removes. */
+   library → set list inserts · set list ↕ reorders · set list → library removes. */
 let swallowClick = false;
 document.addEventListener('click', e => {
   if (swallowClick) {
@@ -969,9 +1081,7 @@ function isDirty() {
   const en = state.loadedId ? libEntry(state.loadedId) : null;
   if (!en) return false;
   const name = (state.program.name || 'UNTITLED').toUpperCase().slice(0, 10);
-  return name !== en.name
-    || JSON.stringify(state.axes) !== JSON.stringify(en.axes)
-    || JSON.stringify(state.layerOn) !== JSON.stringify(en.layerOn || [true, false]);
+  return name !== en.name || JSON.stringify(state.axes) !== JSON.stringify(en.axes);
 }
 const askWrap = document.getElementById('askWrap');
 let askThen = null;
@@ -995,7 +1105,7 @@ document.getElementById('askSave').addEventListener('click', () => {
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !askWrap.hidden) askClose(); });
 
-/* ── MIDI receive: global channel + program change → setlist slot ── */
+/* ── MIDI receive: receive channel + program change → set list slot ── */
 
 const globalChSel = document.getElementById('globalCh');
 globalChSel.innerHTML = '<option value="omni">OMNI</option>'
@@ -1043,35 +1153,18 @@ document.getElementById('miSend').addEventListener('click', () => {
   showMiLog(receiveProgramChange(+miCh.value, pc));
 });
 
-/* ── layers: tab switching + on/off toggles ──────────────────────── */
+/* ── save review ─────────────────────────────────────────────────── */
 
-const layerTabs = [...document.querySelectorAll('.layer-tab')];
-
-function updateLayerTabs() {
-  layerTabs.forEach((t, i) => {
-    t.classList.toggle('on', state.activeLayer === i);
-    t.classList.toggle('off', !state.layerOn[i]);
-  });
+function zoneDetailText(axis, z) {
+  if (z.type === 'ctl') return `CTL     CH ${z.ch} · CC ${z.cc} · ${z.smooth ? 'smooth' : 'linear'}`;
+  if (z.type === 'note') return `NOTE    CH ${z.ch} · #${z.note} (${noteName(z.note)}) · vel ${z.vel} · on at entry, off at exit`;
+  if (z.type === 'switch') {
+    const what = z.action === 'cc' ? `CC ${z.cc} on ${z.onVal} / off ${z.offVal}` : `note #${z.note} (${noteName(z.note)}) vel ${z.vel}`;
+    return `SWITCH  CH ${z.ch} · ${what} · fast entry ≥ ${z.speed}%/s toggles`;
+  }
+  if (z.type === 'freeze') return `FREEZE  holds the ${axis.freeze} value`;
+  return 'DEAD    masks controller zones it overlaps';
 }
-
-layerTabs.forEach((t, i) => {
-  t.addEventListener('click', e => {
-    if (e.target.closest('.lt-pwr')) {
-      state.layerOn[i] = !state.layerOn[i];
-    } else {
-      state.activeLayer = i;
-    }
-    saveState();
-    updateLayerTabs();
-    for (const key of ['yaw', 'pitch']) {
-      const axis = state.axes[key];
-      editors[key].smoothBtn.classList.toggle('on', act(axis).smooth);
-      render(axis);
-    }
-  });
-});
-
-/* ── save review (was: publish) ──────────────────────────────────── */
 
 function exportText() {
   const p = state.program;
@@ -1086,31 +1179,14 @@ function exportText() {
     const a = state.axes[key];
     lines.push(`${a.label}  (${a.endLabels[0]} → ${a.endLabels[1]})`);
     lines.push(rule);
-    a.layers.forEach((ly, i) => {
-      lines.push(`  LAYER ${i + 1} · ${state.layerOn[i] ? 'ON' : 'OFF'} · curve: ${ly.smooth ? 'smooth' : 'linear'}`);
-      /* interleave spans and regions in travel order */
-      const segs = [
-        ...sortedSpans(ly).map(s => ({ lo: s.lo, hi: s.hi, span: s })),
-        ...ly.regions.map(r => ({ lo: r.lo, hi: r.hi, region: r })),
-      ].sort((x, y) => x.lo - y.lo);
-      for (const seg of segs) {
-        const range = `${pct(seg.lo).padStart(6)} – ${pct(seg.hi).padStart(6)}`;
-        if (seg.span) {
-          const s = seg.span;
-          let detail = 'dead';
-          if (s.mode === 'freeze') detail = `freeze ${a.freeze} value`;
-          if (s.mode === 'note') detail = `note on · CH ${s.ch} · #${s.note} (${noteName(s.note)})`;
-          lines.push(`    [${range}]  ZONE   ${detail}`);
-        } else {
-          const r = seg.region;
-          lines.push(`    (${range})  CTL    CH ${r.ch} · CC ${r.cc}`);
-          const pts = sortedPoints(ly).filter(pt => pt.x >= seg.lo - 1e-6 && pt.x <= seg.hi + 1e-6);
-          if (pts.length) {
-            lines.push(`${' '.repeat(23)}curve  ${pts.map(pt => `${pct(pt.x)}→${Math.round(pt.y)}`).join(',  ')}`);
-          }
-        }
+    for (const z of [...a.zones].sort((x, y) => x.lo - y.lo)) {
+      const range = `${pct(z.lo).padStart(6)} – ${pct(z.hi).padStart(6)}`;
+      const colr = z.type === 'dead' ? '' : ` [${colorOf(z).name}]`;
+      lines.push(`  ${range}  ${zoneDetailText(a, z)}${colr}`);
+      if (z.type === 'ctl') {
+        lines.push(`${' '.repeat(19)}curve  ${sortedPoints(z).map(pt => `${pct(pt.x)}→${Math.round(pt.y)}`).join(',  ')}`);
       }
-    });
+    }
     lines.push('');
   }
   if (state.setlist.length) {
@@ -1139,19 +1215,21 @@ function exportJSON() {
   for (const key of ['yaw', 'pitch']) {
     const a = state.axes[key];
     out.axes[key] = {
-      layers: a.layers.map((ly, i) => ({
-        layer: i + 1,
-        enabled: !!state.layerOn[i],
-        curveMode: ly.smooth ? 'smooth' : 'linear',
-        points: sortedPoints(ly).map(p => ({ travel: +(p.x.toFixed(4)), value: Math.round(p.y) })),
-        zones: sortedSpans(ly).map(s => ({
-          lo: +(s.lo.toFixed(4)), hi: +(s.hi.toFixed(4)), mode: s.mode,
-          ...(s.mode === 'note' ? { channel: s.ch, note: s.note } : {}),
-        })),
-        controllerZones: ly.regions.map(r => ({
-          lo: +(r.lo.toFixed(4)), hi: +(r.hi.toFixed(4)), channel: r.ch, cc: r.cc,
-        })),
-      })),
+      zones: [...a.zones].sort((x, y) => x.lo - y.lo).map(z => {
+        const base = { type: z.type, lo: +(z.lo.toFixed(4)), hi: +(z.hi.toFixed(4)) };
+        if (z.type !== 'dead') base.color = colorOf(z).name;
+        if (z.type === 'ctl') Object.assign(base, {
+          channel: z.ch, cc: z.cc, curveMode: z.smooth ? 'smooth' : 'linear',
+          points: sortedPoints(z).map(pt => ({ travel: +(pt.x.toFixed(4)), value: Math.round(pt.y) })),
+        });
+        if (z.type === 'note') Object.assign(base, { channel: z.ch, note: z.note, velocity: z.vel });
+        if (z.type === 'switch') Object.assign(base, {
+          channel: z.ch, action: z.action, speedPctPerSec: z.speed,
+          ...(z.action === 'cc' ? { cc: z.cc, onValue: z.onVal, offValue: z.offVal } : { note: z.note, velocity: z.vel }),
+        });
+        if (z.type === 'freeze') base.holds = key === 'yaw' ? 'pitch' : 'yaw';
+        return base;
+      }),
     };
   }
   return JSON.stringify(out, null, 2);
@@ -1163,7 +1241,7 @@ const modalTitle = document.getElementById('modalTitle');
 let modalFmt = 'text';
 let modalAsNew = false;   // which save the modal's Save button performs
 
-/* Open the review window for the current program. Nothing is stored until
+/* Open the review window for the current Setup. Nothing is stored until
    the modal's Save button is pressed; Cancel / scrim / Esc close it. */
 function showSaveModal(asNew) {
   modalAsNew = asNew;
@@ -1176,7 +1254,7 @@ function showSaveModal(asNew) {
   document.getElementById('confirmSaveBtn').focus();
 }
 function hideModal() { modalWrap.hidden = true; }
-/* brief confirmation on the NAME field after a save (same glow as a MIDI-in load) */
+/* brief confirmation on the SETUP field after a save (same glow as a MIDI-in load) */
 function flashProgName() {
   const el = document.getElementById('progName');
   el.classList.remove('saved');
@@ -1217,7 +1295,7 @@ document.getElementById('copyBtn').addEventListener('click', async () => {
   setTimeout(() => { cap.textContent = old; }, 900);
 });
 
-/* ── program fields / reset / boot ───────────────────────────────── */
+/* ── Setup fields / reset / boot ─────────────────────────────────── */
 
 const progNum = document.getElementById('progNum');
 const progName = document.getElementById('progName');
@@ -1228,7 +1306,6 @@ document.getElementById('resetBtn').addEventListener('click', () => guardUnsaved
   if (!confirm('Reset the demo? This also clears the Library and Set List.')) return;
   state = defaultState();
   progName.value = state.program.name;
-  updateLayerTabs();
   buildPanels();
   for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
   renderLibrarian();
@@ -1236,7 +1313,6 @@ document.getElementById('resetBtn').addEventListener('click', () => guardUnsaved
 
 document.getElementById('appVersion').textContent = 'v' + APP_VERSION;
 
-updateLayerTabs();
 buildPanels();
 for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
 renderLibrarian();

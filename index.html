@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Orbit UI — Assignment Editor</title>
+<title>Orbit UI — Setup Editor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Michroma&display=swap" rel="stylesheet">
@@ -38,15 +38,6 @@
   </div>
 </header>
 
-<nav class="layer-tabs">
-  <button class="layer-tab lt-0 on" type="button">
-    <span class="lt-dot"></span>LAYER 1<span class="lt-pwr" title="layer on / off">⏻</span>
-  </button>
-  <button class="layer-tab lt-1" type="button">
-    <span class="lt-dot"></span>LAYER 2<span class="lt-pwr" title="layer on / off">⏻</span>
-  </button>
-</nav>
-
 <main id="axes"></main>
 
 <div class="lib-outer">
@@ -78,10 +69,11 @@
 
 <footer class="hints">
   <p>
-    <b>double&#8209;click / double&#8209;tap</b> curve to add a point &nbsp;·&nbsp;
-    <b>tap</b> a point, zone, or CH·CC chip to configure &nbsp;·&nbsp;
+    <b>double&#8209;click / double&#8209;tap</b> inside a controller zone to add a curve point &nbsp;·&nbsp;
+    <b>tap</b> a zone, point, or CH·CC chip to configure &nbsp;·&nbsp;
     <b>drag</b> a zone's end points to resize it, its body to move it &nbsp;·&nbsp;
-    <b>drag</b> the ▲ marker to simulate the pedal
+    <b>+ Zone</b> adds a zone on top — zones may overlap &nbsp;·&nbsp;
+    <b>drag</b> the ▲ marker to simulate the pedal (flick it fast into a ⚡ zone)
   </p>
   <button class="ghostbtn" id="resetBtn" type="button">reset demo</button>
 </footer>
