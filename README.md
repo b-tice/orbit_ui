@@ -74,8 +74,8 @@ second Controller zone laid over the first. Controller zones always sit
 underneath the other types; within a type the narrowest zone is drawn on top
 and is the one a tap hits (a covered Controller is always reachable through
 its `CH·CC` chip).
-Where a Note, Switch, Freeze or Dead zone covers a Controller zone, the
-Controller is inactive there and its curve is drawn dotted. Two overlapping
+Where a Note, Freeze or Dead zone covers a Controller zone, the Controller
+is inactive there and its curve is drawn dotted (a Switch zone does not mask). Two overlapping
 Controller zones are both active — unless they share the same transmit
 channel **and** CC, in which case only the topmost (narrowest) one sends in
 the overlap, the other goes dotted there, and both chips turn amber.
@@ -84,7 +84,7 @@ the overlap, the other goes dotted there, and both chips turn amber.
 |---|---|
 | 🎚 **Controller** | sends a CC on the zone's transmit channel, shaped by the zone's own response curve. The curve's first and last points are the zone's **end points** and set the output range; descending end points invert the output, so there is no polarity switch |
 | 🎵 **Note** | note on (with velocity) when the pedal enters, note off when it leaves |
-| ⚡ **Switch** | a **fast entry** (faster than the zone's Speed, in % of travel per second, default 250) toggles the switch on/off. On sends a note on or the CC's *on* value; off sends note off or the *off* value. Slow entry does nothing, and the pedal must leave the zone before it can fire again |
+| ⚡ **Switch** | a **fast entry** (faster than the zone's Speed, in m/s along the travel, default 0.1 — the full span counts as 10 cm) toggles the switch on/off. On sends a note on (velocity 100) or the CC's *on* value; off sends note off or the *off* value. Speed is averaged over the last 100 ms, slow entry does nothing, and the pedal must leave the zone before it can fire again. On MIDI a Switch never masks what is underneath it: Controllers below keep sending, and the readout shows their value alongside the switch's on/off. On Analog Out the jack carries one voltage, so an on Switch overrides the Controller beneath it (its curve goes dotted there and the readout shows the switch voltage); off, the Controller's value is the output. A Switch that is on is drawn bright with a solid border; off it looks like any other zone. Either toggle glows the border for a moment |
 | ❄️ **Freeze** | holds the other axis's value while the pedal is in the zone |
 | 🪦 **Dead** | travel is ignored. A Dead zone is a **mask**: it silences any Controller zone underneath it, so you can carve a dead spot out of a wide Controller zone without splitting it. Travel with no zone at all is dead too |
 

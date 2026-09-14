@@ -25,7 +25,12 @@ let uidn = 1;
 const uid = () => 'z' + (uidn++) + '_' + Math.random().toString(36).slice(2, 7);
 
 const MIN_ZONE = 0.02;          /* narrowest zone, as a fraction of travel */
-const DEFAULT_SWITCH_SPEED = 250; /* % of travel per second */
+/* Switch zones fire on a FAST entry. Speed is in m/s along the pedal's
+   travel, taking the full span (0–100 %) as SPAN_M metres of movement —
+   about what a foot covers heel-to-toe on an expression pedal. */
+const SPAN_M = 0.10;
+const DEFAULT_SWITCH_MS = 0.1;  /* m/s: the full span in 1 s */
+const SPEED_WINDOW_MS = 100;    /* speed is averaged over the last 100 ms of motion */
 
 const ZONE_TYPES = [
   { id: 'ctl',    icon: '🎚', label: 'Controller' },
@@ -90,7 +95,7 @@ function mkZone(type, lo, hi, extra) {
     /* note + switch */
     note: 60, vel: 100,
     /* switch */
-    action: 'note', onVal: 127, offVal: 0, speed: DEFAULT_SWITCH_SPEED,
+    action: 'note', onVal: 127, offVal: 0, speedMs: DEFAULT_SWITCH_MS,
   }, extra || {});
 }
 
@@ -235,7 +240,10 @@ function layerToZones(ly, color) {
 function migrateAxes(axes, layerOn) {
   for (const key of ['yaw', 'pitch']) {
     const a = axes[key];
-    if (a.outputs) continue;
+    if (a.outputs) {
+      for (const tab of ['midi', 'analog']) for (const z of a.outputs[tab].zones) if (z.speedMs === undefined) z.speedMs = DEFAULT_SWITCH_MS;
+      continue;
+    }
     if (a.zones) {           /* v1.8: a single zone set = the MIDI tab */
       a.outputs = { midi: { zones: a.zones }, analog: { zones: defaultAnalogZones(key) } };
       delete a.zones;
@@ -308,6 +316,13 @@ function migrateLibrary(s) {
     s.analogMirrored = true;
   }
   fillSlots(s);
+  if (!s.switchSpeed01) {          /* one-time reset to the 0.1 m/s default */
+    const all = [];
+    for (const k of ['yaw', 'pitch']) for (const tab of TAB_ORDER) all.push(...s.axes[k].outputs[tab].zones);
+    for (const tab of TAB_ORDER) for (const f of s.library[tab]) for (const k of ['yaw', 'pitch']) all.push(...(f.axes[k] || []));
+    for (const z of all) if (z.type === 'switch' || z.speedMs !== undefined) z.speedMs = DEFAULT_SWITCH_MS;
+    s.switchSpeed01 = true;
+  }
 }
 
 let state = loadState();
@@ -357,9 +372,14 @@ function isAbove(axis, a, b) {           /* is a drawn on top of b? */
   const o = drawOrder(axis);
   return o.indexOf(a) > o.indexOf(b);
 }
-/* zones that silence z: every non-Controller zone, plus same-CC Controllers above it */
+/* zones that silence z: Note / Freeze / Dead zones, plus same-CC Controllers
+   above it. On MIDI a Switch is a separate message and never masks. On
+   Analog Out the jack carries ONE voltage, so a Switch that is ON overrides
+   the Controller beneath it; off, the Controller's value comes through. */
+const switchMasks = o => o.type === 'switch' && state.tab === 'analog' && !!simSwitch[o.id];
 const blockers = (axis, z) => Z(axis).filter(o =>
-  o !== z && overlaps(o, z) && (o.type !== 'ctl' || (sameCC(o, z) && isAbove(axis, o, z))));
+  o !== z && overlaps(o, z)
+  && (o.type === 'switch' ? switchMasks(o) : (o.type !== 'ctl' || (sameCC(o, z) && isAbove(axis, o, z)))));
 /* is Controller zone z actually sending at travel t? */
 const ctlActive = (axis, z, t) =>
   t >= z.lo && t <= z.hi && !blockers(axis, z).some(o => t >= o.lo && t <= o.hi);
@@ -471,8 +491,9 @@ function zoneShortLabel(axis, z) {
   if (z.type === 'freeze') return 'FRZ ' + axis.freeze;
   if (z.type === 'note') return '♪ ' + noteName(z.note) + ' ch' + z.ch;
   if (z.type === 'switch') {
-    if (analog) return `⚡ ${toV(z.offVal).toFixed(1)}/${toV(z.onVal).toFixed(1)}V`;
-    return '⚡ ' + (z.action === 'cc' ? 'CC' + z.cc : noteName(z.note)) + ' ch' + z.ch;
+    const st = simSwitch[z.id] ? ' · ON' : '';
+    if (analog) return `⚡ ${toV(z.offVal).toFixed(1)}/${toV(z.onVal).toFixed(1)}V${st}`;
+    return '⚡ ' + (z.action === 'cc' ? 'CC' + z.cc : noteName(z.note)) + ' ch' + z.ch + st;
   }
   return analog ? 'CV' : `CH${z.ch} · CC${z.cc}`;
 }
@@ -489,14 +510,19 @@ function zoneOutput(axis, z, t) {
   if (z.type === 'note') return `♪${noteName(z.note)} ch${z.ch} v${z.vel}`;
   if (z.type === 'switch') {
     const on = !!simSwitch[z.id];
-    if (analog) return `⚡${on ? toV(z.onVal).toFixed(1) : toV(z.offVal).toFixed(1)}V`;
+    /* analog: the switch IS the jack's voltage while on; off it is silent
+       and the Controller underneath shows instead */
+    if (analog) return on ? `⚡${toV(z.onVal).toFixed(2)}V` : null;
     return `⚡${z.action === 'cc' ? 'CC' + z.cc : noteName(z.note)} ${on ? 'ON' : 'off'}`;
   }
   return null;
 }
 
-/* runtime-only: which Switch zones the sim marker has toggled on */
+/* runtime-only: which Switch zones the sim marker has toggled on, and when
+   each last toggled either way (for the brief glow that marks the toggle) */
 const simSwitch = {};
+const simFlash = {};
+const FLASH_MS = 1500;
 
 /* ── geometry / rendering ────────────────────────────────────────── */
 
@@ -613,9 +639,17 @@ function render(axis) {
     const col = colorOf(z);
     const dead = z.type === 'dead';
     const fill = dead ? 'var(--dead-fill)' : col.c;
-    const fillOp = dead ? 1 : (z.type === 'ctl' ? 0.09 : 0.16);
+    /* Switch look: ON = bright band with a solid border, OFF = the normal
+       band. Either toggle also glows the border for FLASH_MS. */
+    const swOn = z.type === 'switch' && !!simSwitch[z.id];
+    const flashing = z.type === 'switch' && simFlash[z.id] && (performance.now() - simFlash[z.id]) < FLASH_MS;
+    const fillOp = dead ? 1 : (z.type === 'ctl' ? 0.09 : (swOn ? 0.5 : 0.16));
     const edge = dead ? 'var(--dead-edge)' : col.c;
     parts.push(`<rect x="${xa}" y="${g.y0}" width="${xb - xa}" height="${g.y1 - g.y0}" fill="${fill}" fill-opacity="${fillOp}" data-role="zone" data-id="${z.id}" style="cursor:grab"/>`);
+    if (swOn || flashing) {
+      const ci = (z.color || 0) % PALETTE.length;
+      parts.push(`<rect x="${xa + 1}" y="${g.y0 + 1}" width="${xb - xa - 2}" height="${g.y1 - g.y0 - 2}" fill="none" stroke="${col.c}" stroke-width="${flashing ? 2.5 : 1.5}" rx="3" ${flashing ? `filter="url(#glow-${axis.key}-${ci})"` : 'stroke-opacity="0.9"'} pointer-events="none"/>`);
+    }
     parts.push(`<line x1="${xa + 1.5}" y1="${g.y0 + 6}" x2="${xa + 1.5}" y2="${g.y1 - 6}" stroke="${edge}" stroke-opacity="${dead ? 1 : 0.8}" stroke-width="3" stroke-linecap="round" pointer-events="none"/>`);
     parts.push(`<line x1="${xb - 1.5}" y1="${g.y0 + 6}" x2="${xb - 1.5}" y2="${g.y1 - 6}" stroke="${edge}" stroke-opacity="${dead ? 1 : 0.8}" stroke-width="3" stroke-linecap="round" pointer-events="none"/>`);
     if (z.type !== 'ctl') {
@@ -674,6 +708,11 @@ function render(axis) {
   const sx = g.tx(axis.sim);
   parts.push(`<line x1="${sx}" y1="${g.y0}" x2="${sx}" y2="${g.y1 + 8}" stroke="var(--sim)" stroke-width="1" opacity="0.65" pointer-events="none"/>`);
   for (const z of Z(axis)) {
+    if (z.type === 'switch' && switchMasks(z) && axis.sim >= z.lo && axis.sim <= z.hi) {
+      const sy = g.ty(z.onVal);
+      parts.push(`<circle cx="${sx}" cy="${sy}" r="3.5" fill="var(--sim)" filter="url(#glow-sim-${axis.key})" pointer-events="none"/>`);
+      continue;
+    }
     if (z.type !== 'ctl' || !ctlActive(axis, z, axis.sim)) continue;
     const sy = g.ty(curveValue(z, axis.sim));
     parts.push(`<circle cx="${sx}" cy="${sy}" r="3.5" fill="var(--sim)" filter="url(#glow-sim-${axis.key})" pointer-events="none"/>`);
@@ -688,7 +727,7 @@ function render(axis) {
 
   /* output readout: every active output at the marker */
   const outs = zonesAt(axis, axis.sim)
-    .sort((a, b) => a.lo - b.lo)
+    .sort((a, b) => (a.type === 'switch') - (b.type === 'switch') || a.lo - b.lo)
     .map(z => zoneOutput(axis, z, axis.sim))
     .filter(Boolean);
   ed.outEl.textContent = outs.length ? outs.join(' · ') : 'DEAD';
@@ -744,7 +783,7 @@ function wireEditor(svg, axis) {
       const z = zoneById(axis, drag.id);
       if (z) { drag.zLo = z.lo; drag.zHi = z.hi; drag.pts = z.points.map(p => p.x); }
     }
-    if (drag.role === 'sim') simTrack = { t: axis.sim, time: performance.now() };
+    if (drag.role === 'sim') simTrack = { t: axis.sim, time: performance.now(), hist: [] };
     svg.setPointerCapture(e.pointerId);
     if (drag.role !== 'bg') e.preventDefault();
   });
@@ -827,16 +866,24 @@ function wireEditor(svg, axis) {
 }
 
 /* the sim marker moving: Switch zones fire on a fast ENTRY, toggling on/off;
-   the marker must leave the zone before it can fire again */
+   the marker must leave the zone before it can fire again. Speed is the
+   average over the last SPEED_WINDOW_MS so single jittery events don't count. */
 function simMove(axis, t, track) {
   const now = performance.now();
-  const dt = (now - track.time) / 1000;
-  const speed = dt > 0 ? Math.abs(t - track.t) * 100 / dt : 0;   /* % of travel per second */
+  track.hist = (track.hist || []).filter(h => now - h.time <= SPEED_WINDOW_MS);
+  track.hist.push({ t, time: now });
+  const first = track.hist[0];
+  const dt = (now - first.time) / 1000;
+  const speed = dt > 0.015 ? Math.abs(t - first.t) * SPAN_M / dt : 0;   /* m/s along the travel */
   for (const z of Z(axis)) {
     if (z.type !== 'switch') continue;
     const wasIn = track.t >= z.lo && track.t <= z.hi;
     const nowIn = t >= z.lo && t <= z.hi;
-    if (!wasIn && nowIn && speed >= z.speed) simSwitch[z.id] = !simSwitch[z.id];
+    if (!wasIn && nowIn && speed >= z.speedMs) {
+      simSwitch[z.id] = !simSwitch[z.id];
+      simFlash[z.id] = now;                                /* glow marks the toggle, on or off */
+      setTimeout(() => render(axis), FLASH_MS + 30);       /* then settle to the on/off look */
+    }
   }
   track.t = t; track.time = now;
   axis.sim = t;
@@ -962,8 +1009,8 @@ function openZonePopover(axis, z, cx, cy) {
   } else if (z.type === 'switch' && analog) {
     rows = `${numRow('On volts', 'zonv', toV(z.onVal).toFixed(2), 0, VOLTS, 'step="0.01"')}
       ${numRow('Off volts', 'zoffv', toV(z.offVal).toFixed(2), 0, VOLTS, 'step="0.01"')}
-      ${numRow('Speed %/s', 'zspeed', z.speed, 50, 1000)}
-      <div class="pop-note">a fast entry (faster than Speed) toggles the output between the two voltages · slow entry does nothing</div>`;
+      ${numRow('Speed m/s', 'zspeed', z.speedMs.toFixed(2), 0.05, 3, 'step="0.05"')}
+      <div class="pop-note">a fast entry (faster than Speed) toggles it · while ON the jack holds the on voltage and the controller underneath is silenced · off, the controller's curve is the output</div>`;
   } else if (z.type === 'switch') {
     rows = `<div class="pop-row"><label>Action</label>
         <div class="seg"><button class="${z.action !== 'cc' ? 'on' : ''}" data-action="note" type="button">Note</button><button class="${z.action === 'cc' ? 'on' : ''}" data-action="cc" type="button">CC</button></div></div>
@@ -971,10 +1018,9 @@ function openZonePopover(axis, z, cx, cy) {
       ${z.action === 'cc'
         ? `${numRow('CC #', 'zcc', z.cc, 0, 127)}${numRow('On value', 'zon', z.onVal, 0, 127)}${numRow('Off value', 'zoff', z.offVal, 0, 127)}`
         : `${numRow('Note #', 'znote', z.note, 0, 127)}
-           <div class="pop-row"><label>Note</label><span class="pop-note" id="znName">${noteName(z.note)}</span></div>
-           ${numRow('Velocity', 'zvel', z.vel, 1, 127)}`}
-      ${numRow('Speed %/s', 'zspeed', z.speed, 50, 1000)}
-      <div class="pop-note">a fast entry (faster than Speed) toggles on / off · slow entry does nothing</div>`;
+           <div class="pop-row"><label>Note</label><span class="pop-note" id="znName">${noteName(z.note)}</span></div>`}
+      ${numRow('Speed m/s', 'zspeed', z.speedMs.toFixed(2), 0.05, 3, 'step="0.05"')}
+      <div class="pop-note">a fast entry (faster than Speed) toggles on / off · slow entry does nothing · controllers underneath keep sending</div>`;
   } else if (z.type === 'freeze') {
     rows = `<div class="pop-note">while the pedal is in this zone the ${axis.freeze} value is held</div>`;
   } else {
@@ -1020,7 +1066,7 @@ function openZonePopover(axis, z, cx, cy) {
   wireNum(axis, 'zvel', v => { z.vel = clampi(v, 1, 127); });
   wireNum(axis, 'zon', v => { z.onVal = clampi(v, 0, 127); });
   wireNum(axis, 'zoff', v => { z.offVal = clampi(v, 0, 127); });
-  wireNum(axis, 'zspeed', v => { z.speed = clampi(v, 50, 1000); });
+  wireNum(axis, 'zspeed', v => { z.speedMs = Math.max(0.05, Math.min(3, Math.round(v * 20) / 20)); });
   wireNum(axis, 'znote', v => {
     z.note = clampi(v, 0, 127);
     const nm = pop.querySelector('#znName');
