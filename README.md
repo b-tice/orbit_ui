@@ -74,7 +74,8 @@ the missing ones are created as mirrors with the same name (MIDI → Analog
 turns every non-Controller zone into a Dead zone), and you edit them
 independently from there. The slot row shows the current tab's Setup;
 switch tabs to see the slot's other Setups. Every zone has a type, a travel range, and a
-color, and zones **may overlap** — a second CC on the same sweep is just a
+color (an 8-color palette with no red or green, for colorblind users), and
+zones **may overlap** — a second CC on the same sweep is just a
 second Controller zone laid over the first. Controller zones always sit
 underneath the other types; within a type the narrowest zone is drawn on top
 and is the one a tap hits (a covered Controller is always reachable through
@@ -87,7 +88,7 @@ the overlap, the other goes dotted there, and both chips turn amber.
 
 | Type | What travel inside it does |
 |---|---|
-| 🎚 **Controller** | sends a CC on the zone's transmit channel, shaped by the zone's own response curve. The curve's first and last points are the zone's **end points** and set the output range; descending end points invert the output, so there is no polarity switch |
+| 🎚 **Controller** | sends a CC on the zone's transmit channel, shaped by the zone's own response curve. The curve's first and last points are the zone's **end points** and set the output range; descending end points invert the output, so there is no polarity switch. **On exit** (Hold, the default, or Reset) says what the output does when the pedal leaves the zone: keep its last value, or drop to zero. The readout shows the held or reset value while the marker is outside |
 | 🎵 **Note** | note on (with velocity) when the pedal enters, note off when it leaves |
 | ⚡ **Switch** | a **fast entry** (faster than the zone's Speed, in m/s along the travel, default 0.1 — the full span counts as 10 cm) toggles the switch on/off. On sends a note on (velocity 100) or the CC's *on* value; off sends note off or the *off* value. Speed is averaged over the last 100 ms, slow entry does nothing, and the pedal must leave the zone before it can fire again. On MIDI a Switch never masks what is underneath it: Controllers below keep sending, and the readout shows their value alongside the switch's on/off. On Analog Out the jack carries one voltage, so an on Switch overrides the Controller beneath it (its curve goes dotted there and the readout shows the switch voltage); off, the Controller's value is the output. A Switch that is on is drawn bright with a solid border; off it looks like any other zone. Either toggle glows the border for a moment |
 | ❄️ **Freeze** | holds the other axis's value while the pedal is in the zone |

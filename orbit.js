@@ -16,7 +16,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.12';
+const APP_VERSION = '1.13';
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -45,14 +45,15 @@ const ZONE_TYPES = [
 ];
 const zoneType = id => ZONE_TYPES.find(t => t.id === id) || ZONE_TYPES[0];
 
-/* zone colors — indigo and magenta first (the v1.5 layer colors) */
+/* zone colors — indigo and magenta first (the v1.5 layer colors). No red
+   and no green, per David: about 1 in 12 men can't tell them apart. */
 const PALETTE = [
   { name: 'indigo',  c: '#818cf8', pt: '#e0e7ff' },
   { name: 'magenta', c: '#e879f9', pt: '#fae8ff' },
   { name: 'cyan',    c: '#22d3ee', pt: '#cffafe' },
   { name: 'amber',   c: '#fbbf24', pt: '#fef3c7' },
-  { name: 'green',   c: '#4ade80', pt: '#dcfce7' },
-  { name: 'coral',   c: '#fb7185', pt: '#ffe4e6' },
+  { name: 'blue',    c: '#60a5fa', pt: '#dbeafe' },
+  { name: 'orange',  c: '#fb923c', pt: '#ffedd5' },
   { name: 'violet',  c: '#a78bfa', pt: '#ede9fe' },
   { name: 'teal',    c: '#2dd4bf', pt: '#ccfbf1' },
 ];
@@ -93,8 +94,10 @@ const setZ = (axis, zones) => { axis.outputs[state.tab].zones = zones; };
 function mkZone(type, lo, hi, extra) {
   return Object.assign({
     id: uid(), type, lo, hi, color: 0,
-    /* controller (MIDI: channel + CC · analog: the axis's own jack) */
-    ch: 1, cc: 1, smooth: false,
+    /* controller (MIDI: channel + CC · analog: the axis's own jack)
+       exit: what the output does when the pedal LEAVES the zone —
+       'hold' keeps the last value, 'reset' drops it to zero */
+    ch: 1, cc: 1, smooth: false, exit: 'hold',
     points: [{ x: lo, y: 0 }, { x: hi, y: 127 }],
     /* note + switch */
     note: 60, vel: 100,
@@ -252,7 +255,10 @@ function migrateAxes(axes, layerOn) {
   for (const key of ['yaw', 'pitch']) {
     const a = axes[key];
     if (a.outputs) {
-      for (const tab of ['midi', 'analog']) for (const z of a.outputs[tab].zones) if (z.speedMs === undefined) z.speedMs = DEFAULT_SWITCH_MS;
+      for (const tab of ['midi', 'analog']) for (const z of a.outputs[tab].zones) {
+        if (z.speedMs === undefined) z.speedMs = DEFAULT_SWITCH_MS;
+        if (z.exit === undefined) z.exit = 'hold';
+      }
       if (a.outputs.analog.invert === undefined) a.outputs.analog.invert = false;
       continue;
     }
@@ -539,6 +545,11 @@ function zoneOutput(axis, z, t) {
   return null;
 }
 
+/* runtime-only: per OUTPUT TARGET (a MIDI channel+CC, or an analog jack),
+   the last value sent and which zone sent it — one CC has one value, so
+   whichever zone sent last decides the hold / reset shown on exit */
+const simLast = {};
+const targetKey = (axis, z) => (state.tab === 'analog' ? `${state.tab}:${axis.key}` : `${state.tab}:${z.ch}:${z.cc}`);
 /* runtime-only: which Switch zones the sim marker has toggled on, and when
    each last toggled either way (for the brief glow that marks the toggle) */
 const simSwitch = {};
@@ -762,13 +773,40 @@ function render(axis) {
   ed.svg.setAttribute('height', g.h);
   ed.svg.innerHTML = parts.join('');
 
-  /* output readout: every active output at the marker */
-  const outs = zonesAt(axis, axis.sim)
-    .sort((a, b) => (a.type === 'switch') - (b.type === 'switch') || a.lo - b.lo)
-    .map(z => zoneOutput(axis, z, axis.sim))
-    .filter(Boolean);
-  ed.outEl.textContent = (outs.length ? outs.join(' · ') : 'DEAD')
-    + (state.tab === 'analog' && axis.outputs.analog.invert ? '  ⇅' : '');
+  /* output readout: every active output at the marker; Controllers the
+     marker has left show what they are doing meanwhile (hold / reset) */
+  const analog = state.tab === 'analog';
+  const fmt = v => (analog ? `${jackV(axis, v).toFixed(2)}V` : String(Math.round(v)));
+  const outs = [];
+  const activeKeys = new Set();
+  for (const z of [...Z(axis)].sort((a, b) => (a.type === 'switch') - (b.type === 'switch') || a.lo - b.lo)) {
+    const here = axis.sim >= z.lo - 1e-9 && axis.sim <= z.hi + 1e-9;
+    if (z.type === 'ctl') {
+      if (here && ctlActive(axis, z, axis.sim)) {
+        const key = targetKey(axis, z);
+        simLast[key] = { zoneId: z.id, v: curveValue(z, axis.sim), label: analog ? '' : `CC${z.cc} ch${z.ch}=` };
+        activeKeys.add(key);
+        outs.push(zoneOutput(axis, z, axis.sim));
+      }
+    } else if (here) {
+      const o = zoneOutput(axis, z, axis.sim);
+      if (o) outs.push(o);
+    }
+  }
+  /* targets nobody is driving right now: hold or reset per the zone that sent last */
+  const idle = [];
+  const prefix = `${state.tab}:`;
+  for (const key of Object.keys(simLast)) {
+    if (!key.startsWith(prefix) || activeKeys.has(key)) continue;
+    if (analog && key !== `${prefix}${axis.key}`) continue;
+    const m = simLast[key];
+    const z = zoneById(axis, m.zoneId);
+    if (!z) continue;                        /* belongs to the other axis, or was deleted */
+    if (z.exit === 'reset') m.v = 0;
+    idle.push(`${m.label}${fmt(m.v)} ${z.exit === 'reset' ? 'reset' : 'hold'}`);
+  }
+  const text = outs.length ? outs.join(' · ') : (idle.length ? idle.join(' · ') : 'DEAD');
+  ed.outEl.textContent = text + (analog && axis.outputs.analog.invert ? '  ⇅' : '');
 }
 
 function commit(axis) {
@@ -1037,6 +1075,8 @@ function openZonePopover(axis, z, cx, cy) {
       ${numRow('CC #', 'zcc', z.cc, 0, 127)}`}
       <div class="pop-row"><label>Response curve</label>
         <button class="ghostbtn ${z.smooth ? 'on' : ''}" id="zsmooth" type="button" title="linear ↔ smooth (monotone cubic) interpolation between the points">smooth</button></div>
+      <div class="pop-row"><label>On exit</label>
+        <div class="seg" title="what the output does when the pedal leaves this zone"><button class="${z.exit !== 'reset' ? 'on' : ''}" data-exit="hold" type="button">Hold</button><button class="${z.exit === 'reset' ? 'on' : ''}" data-exit="reset" type="button">Reset</button></div></div>
       <div class="pop-note">drag the end points to set the output range · double-click the curve to add points</div>
       ${ccConflict(axis, z) ? `<div class="pop-note warn">overlaps another controller zone${analog ? '' : ' on the same channel + CC'} — where they overlap only the topmost (narrowest) one sends</div>` : ''}`;
   } else if (z.type === 'note') {
@@ -1090,6 +1130,9 @@ function openZonePopover(axis, z, cx, cy) {
   pop.querySelectorAll('[data-action]').forEach(b => b.addEventListener('click', () => {
     z.action = b.dataset.action; commit(axis); reopen();
   }));
+  pop.querySelectorAll('[data-exit]').forEach(b => b.addEventListener('click', () => {
+    z.exit = b.dataset.exit; commit(axis); reopen();
+  }));
   wireNum(axis, 'zonv', v => { z.onVal = Math.max(0, Math.min(127, fromV(v))); });
   wireNum(axis, 'zoffv', v => { z.offVal = Math.max(0, Math.min(127, fromV(v))); });
   const setRange = (lo, hi) => {
@@ -1116,6 +1159,7 @@ function openZonePopover(axis, z, cx, cy) {
   pop.querySelector('#zdel').addEventListener('click', () => {
     setZ(axis, Z(axis).filter(x => x.id !== z.id));
     delete simSwitch[z.id];
+    for (const k of Object.keys(simLast)) if (simLast[k].zoneId === z.id) delete simLast[k];
     closePopover();
     commit(axis);
   });
