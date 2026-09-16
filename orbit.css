@@ -240,7 +240,6 @@ svg .zone-label { letter-spacing: .08em; }
 }
 .type-btn .ico { font-size: 12px; line-height: 1; flex: none; }
 .type-btn.on { color: var(--ink); border-color: var(--chip-line); background: var(--chip-fill); }
-.type-btn.wide { grid-column: span 2; }
 .swatches { display: flex; gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
 .swatch {
   width: 15px; height: 15px; border-radius: 50%; border: 2px solid transparent;

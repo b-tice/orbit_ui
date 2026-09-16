@@ -16,7 +16,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.13';
+const APP_VERSION = '1.14';
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -550,6 +550,16 @@ function zoneOutput(axis, z, t) {
    whichever zone sent last decides the hold / reset shown on exit */
 const simLast = {};
 const targetKey = (axis, z) => (state.tab === 'analog' ? `${state.tab}:${axis.key}` : `${state.tab}:${z.ch}:${z.cc}`);
+/* runtime-only: the selected zone (tap a zone or its chip). Delete /
+   Backspace removes it; Esc or a tap on empty travel clears it. */
+let sel = null;   /* { axisKey, id } */
+const isSel = (axis, z) => !!sel && sel.axisKey === axis.key && sel.id === z.id;
+function selectZone(axis, z) {
+  const prev = sel;
+  sel = z ? { axisKey: axis.key, id: z.id } : null;
+  if (prev && (!sel || prev.axisKey !== sel.axisKey)) render(state.axes[prev.axisKey]);
+  render(axis);
+}
 /* runtime-only: which Switch zones the sim marker has toggled on, and when
    each last toggled either way (for the brief glow that marks the toggle) */
 const simSwitch = {};
@@ -698,6 +708,10 @@ function render(axis) {
       const ci = (z.color || 0) % PALETTE.length;
       parts.push(`<rect x="${xa + 1}" y="${g.y0 + 1}" width="${xb - xa - 2}" height="${g.y1 - g.y0 - 2}" fill="none" stroke="${col.c}" stroke-width="${flashing ? 2.5 : 1.5}" rx="3" ${flashing ? `filter="url(#glow-${axis.key}-${ci})"` : 'stroke-opacity="0.9"'} pointer-events="none"/>`);
     }
+    if (isSel(axis, z)) {
+      /* selected: a dashed outline in the sim color (Delete removes it) */
+      parts.push(`<rect x="${xa + 1.5}" y="${g.y0 + 1.5}" width="${xb - xa - 3}" height="${g.y1 - g.y0 - 3}" fill="none" stroke="var(--sim)" stroke-width="1.5" stroke-dasharray="4 3" rx="3" pointer-events="none"/>`);
+    }
     parts.push(`<line x1="${xa + 1.5}" y1="${g.y0 + 6}" x2="${xa + 1.5}" y2="${g.y1 - 6}" stroke="${edge}" stroke-opacity="${dead ? 1 : 0.8}" stroke-width="3" stroke-linecap="round" pointer-events="none"/>`);
     parts.push(`<line x1="${xb - 1.5}" y1="${g.y0 + 6}" x2="${xb - 1.5}" y2="${g.y1 - 6}" stroke="${edge}" stroke-opacity="${dead ? 1 : 0.8}" stroke-width="3" stroke-linecap="round" pointer-events="none"/>`);
     if (z.type !== 'ctl') {
@@ -745,8 +759,9 @@ function render(axis) {
     const col = colorOf(c.z);
     const y = 6 + c.row * GEO.chipRow;
     const warn = ccConflict(axis, c.z);   /* amber: shares CH+CC with an overlapping Controller */
+    const selected = isSel(axis, c.z);
     parts.push(`<g data-role="chip" data-id="${c.z.id}" style="cursor:pointer">${warn ? `<title>overlaps another Controller on the same channel and CC — the topmost one wins</title>` : ''}
-      <rect x="${c.cx - c.w / 2}" y="${y}" width="${c.w}" height="17" rx="8.5" fill="${warn ? 'var(--warn-fill)' : 'var(--chip-fill)'}" stroke="${warn ? 'var(--warn)' : col.c}" stroke-opacity="${warn ? 1 : 0.7}"/>
+      <rect x="${c.cx - c.w / 2}" y="${y}" width="${c.w}" height="17" rx="8.5" fill="${warn ? 'var(--warn-fill)' : 'var(--chip-fill)'}" stroke="${selected ? 'var(--sim)' : (warn ? 'var(--warn)' : col.c)}" stroke-opacity="${selected || warn ? 1 : 0.7}" stroke-width="${selected ? 2 : 1}"${selected ? ` filter="url(#glow-sim-${axis.key})"` : ''}/>
       <circle cx="${c.cx - c.w / 2 + 9}" cy="${y + 8.5}" r="3" fill="${col.c}"/>
       <text x="${c.cx + 4}" y="${y + 12}" font-size="8" text-anchor="middle" class="chip-label">${c.label}</text>
     </g>`);
@@ -835,10 +850,13 @@ function updateSaveButtons() {
 
 /* ── interactions ────────────────────────────────────────────────── */
 
+const TAP_GRACE_MS = 260;   /* a second tap inside this window is a double-tap */
 function wireEditor(svg, axis) {
   let drag = null;
-  let lastTap = { time: 0, x: 0, y: 0 };
+  let lastTap = { time: 0, x: 0, y: 0, key: '' };
+  let pending = null;         /* the popover a single tap will open once the grace period passes */
   let simTrack = { t: axis.sim, time: 0 };
+  const cancelPending = () => { if (pending) { clearTimeout(pending); pending = null; } };
 
   const evPos = e => {
     const rect = svg.getBoundingClientRect();
@@ -868,7 +886,7 @@ function wireEditor(svg, axis) {
   svg.addEventListener('pointermove', e => {
     if (!drag) return;
     const { px, py } = evPos(e);
-    if (Math.hypot(px - drag.startPx, py - drag.startPy) > 4) drag.moved = true;
+    if (Math.hypot(px - drag.startPx, py - drag.startPy) > 4) { drag.moved = true; cancelPending(); }
     if (!drag.moved) return;
     const g = axisGeom(axis);
     const t = g.it(px);
@@ -912,33 +930,38 @@ function wireEditor(svg, axis) {
     if (d.role === 'sim') saveState();
     if (d.moved) { if (d.role !== 'sim') saveState(); return; }
 
-    /* tap (no drag) */
+    /* tap (no drag). A second tap within TAP_GRACE_MS on the same thing is
+       a double-tap: it adds a curve point and cancels the popover the first
+       tap was about to open. */
     const { px, py } = evPos(e);
-    if (d.role === 'point') { openPointPopover(axis, d.id, d.idx, e.clientX, e.clientY); return; }
-    if (d.role === 'zone' || d.role === 'edge' || d.role === 'chip') {
-      const z = zoneById(axis, d.id);
-      if (z) openZonePopover(axis, z, e.clientX, e.clientY);
+    const now = Date.now();
+    const key = `${d.role}:${d.id || ''}:${d.idx}`;
+    const dbl = now - lastTap.time < TAP_GRACE_MS && lastTap.key === key
+      && Math.hypot(px - lastTap.x, py - lastTap.y) < 30;
+    lastTap = { time: now, x: px, y: py, key };
+    if (dbl) {
+      cancelPending();
+      lastTap = { time: 0, x: 0, y: 0, key: '' };
+      if (d.role === 'bg' || d.role === 'zone' || d.role === 'edge') addPointAt(axis, px, py);
       return;
     }
 
-    /* background tap: double-tap adds a point (touch path) */
-    const now = Date.now();
-    if (d.pointerType !== 'mouse'
-        && now - lastTap.time < 350
-        && Math.hypot(px - lastTap.x, py - lastTap.y) < 30) {
-      addPointAt(axis, px, py);
-      lastTap = { time: 0, x: 0, y: 0 };
-    } else {
-      lastTap = { time: now, x: px, y: py };
+    if (d.role === 'point') {
+      cancelPending();
+      pending = setTimeout(() => { pending = null; openPointPopover(axis, d.id, d.idx, e.clientX, e.clientY); }, TAP_GRACE_MS);
+      return;
     }
-  });
-
-  svg.addEventListener('dblclick', e => {
-    const el = e.target.closest('[data-role]');
-    const role = el ? el.dataset.role : 'bg';
-    if (role !== 'bg' && role !== 'zone' && role !== 'edge') return;
-    const { px, py } = evPos(e);
-    addPointAt(axis, px, py);
+    if (d.role === 'zone' || d.role === 'edge' || d.role === 'chip') {
+      const z = zoneById(axis, d.id);
+      if (!z) return;
+      selectZone(axis, z);          /* selection is immediate */
+      cancelPending();
+      const cx = e.clientX, cy = e.clientY;
+      pending = setTimeout(() => { pending = null; openZonePopover(axis, z, cx, cy); }, TAP_GRACE_MS);
+      return;
+    }
+    /* empty travel: clear the selection */
+    if (d.role === 'bg' || d.role === 'sim') { cancelPending(); if (sel) selectZone(axis, null); }
   });
 }
 
@@ -1060,10 +1083,10 @@ function openPointPopover(axis, zid, idx, cx, cy) {
 function openZonePopover(axis, z, cx, cy) {
   const col = colorOf(z);
   const analog = state.tab === 'analog';
-  const typeOrder = ['ctl', 'note', 'switch', 'dead', 'freeze'].filter(t => OUT().types.includes(t));   /* Freeze last: full-width button */
+  const typeOrder = ['ctl', 'note', 'switch', 'dead', 'freeze'].filter(t => OUT().types.includes(t));
   const typeBtns = typeOrder.map(zoneType).map(t => `
-    <button class="type-btn ${t.id === 'freeze' ? 'wide' : ''} ${z.type === t.id ? 'on' : ''}" data-type="${t.id}" type="button" title="${t.label}">
-      <span class="ico">${t.icon}</span>${t.id === 'freeze' ? 'Freeze ' + axis.freeze + ' value' : t.label}
+    <button class="type-btn ${z.type === t.id ? 'on' : ''}" data-type="${t.id}" type="button" title="${t.id === 'freeze' ? 'Freeze: hold the ' + axis.freeze + ' value while the pedal is in this zone' : t.label}">
+      <span class="ico">${t.icon}</span>${t.id === 'freeze' ? 'Freeze ' + axis.freeze : t.label}
     </button>`).join('');
   const swatches = PALETTE.map((p, i) => `
     <button class="swatch ${((z.color || 0) % PALETTE.length) === i ? 'on' : ''}" data-color="${i}" type="button"
@@ -1156,14 +1179,34 @@ function openZonePopover(axis, z, cx, cy) {
   });
   const sm = pop.querySelector('#zsmooth');
   if (sm) sm.addEventListener('click', () => { z.smooth = !z.smooth; sm.classList.toggle('on', z.smooth); commit(axis); });
-  pop.querySelector('#zdel').addEventListener('click', () => {
-    setZ(axis, Z(axis).filter(x => x.id !== z.id));
-    delete simSwitch[z.id];
-    for (const k of Object.keys(simLast)) if (simLast[k].zoneId === z.id) delete simLast[k];
-    closePopover();
-    commit(axis);
-  });
+  pop.querySelector('#zdel').addEventListener('click', () => { closePopover(); deleteZone(axis, z); });
 }
+
+function deleteZone(axis, z) {
+  setZ(axis, Z(axis).filter(x => x.id !== z.id));
+  delete simSwitch[z.id];
+  for (const k of Object.keys(simLast)) if (simLast[k].zoneId === z.id) delete simLast[k];
+  if (isSel(axis, z)) sel = null;
+  commit(axis);
+}
+
+/* Delete / Backspace removes the selected zone; Esc clears the selection.
+   Ignored while typing in a field. */
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  if (!sel) return;
+  const axis = state.axes[sel.axisKey];
+  const z = zoneById(axis, sel.id);
+  if (!z) { sel = null; return; }
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    e.preventDefault();
+    closePopover();
+    deleteZone(axis, z);
+  } else if (e.key === 'Escape' && pop.hidden) {
+    selectZone(axis, null);
+  }
+});
 
 /* ── librarian: per-output Library + Set List of slots ───────────── */
 
@@ -1265,6 +1308,7 @@ function loadFile(id, tab) {
   return true;
 }
 function refreshEditor() {
+  sel = null;
   progName.value = state.names[state.tab];
   buildPanels();
   for (const key of ['yaw', 'pitch']) commit(state.axes[key]);

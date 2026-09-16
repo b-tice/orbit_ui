@@ -114,7 +114,8 @@ Out Setup mirrored from them.
 | Gesture | Effect |
 |---|---|
 | drag a point | move it in travel/value (end points move in value only; drag the zone's edge to move them in travel) |
-| double-click / double-tap inside a Controller zone | add a curve point to the topmost Controller zone there |
+| double-click / double-tap inside a Controller zone | add a curve point to the topmost Controller zone there (a single tap selects the zone and, after a short pause, opens its popover; the second tap of a double-tap cancels that) |
+| select a zone | a tap on a zone or its chip selects it (dashed outline, chip border lit). **Delete** / **Backspace** removes the selected zone; **Esc** or a tap on empty travel clears the selection |
 | tap a point | popover: numeric travel/value, delete (end points can't be deleted) |
 | MIDI / ANALOG OUT tabs | switch which output's zones you are editing |
 | tap a zone (or its `CH·CC` chip on MIDI) | popover: type (Controller / Note / Switch / Freeze / Dead on MIDI; Controller / Switch / Dead on Analog), range %, color, the type's settings (transmit ch + CC, note, velocity, switch action / voltages + speed, linear ↔ smooth response curve), delete |
