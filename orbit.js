@@ -11,12 +11,15 @@
    Analog Out — sharing the same editor; only what a zone drives differs.
    The Library is per output too (a MIDI Setup, an Analog Setup; Ground
    Control later), and a Set List slot holds one Setup per output, recalled
-   together by one program change. */
+   together by one program change.
+   v1.15: the GROUND CONTROL tab (gc/tab.js) — the unit's own editor, ported.
+   Its Library column is the unit's Setup bank; a Set List slot's `gc` entry
+   names a slot on the unit (e.g. 'B3') that recalls with the others. */
 
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.14';
+const APP_VERSION = '1.15';
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -79,7 +82,11 @@ const OUTPUTS = {
     valLabel: v => toV(v).toFixed(2) + 'V',
   },
 };
-const TAB_ORDER = ['midi', 'analog'];
+/* the third output has no zones: its Setups live on the Ground Control unit */
+OUTPUTS.gc = { key: 'gc', label: 'GROUND CONTROL', tag: 'GC', chips: false, types: [], gridLabel: v => String(v), valLabel: v => String(v) };
+const TAB_ORDER = ['midi', 'analog'];          /* the zone-editing outputs */
+const SLOT_KEYS = ['midi', 'analog', 'gc'];    /* what a Set List slot can hold */
+const isGC = () => state.tab === 'gc';
 const OUT = () => OUTPUTS[state.tab];
 /* the EXP jack an axis drives is fixed by the hardware: pitch → EXP 1, yaw → EXP 2 */
 const jackOf = axis => (axis.key === 'pitch' ? 1 : 2);
@@ -185,7 +192,7 @@ const jackV = (axis, v) => (axis.outputs.analog.invert ? VOLTS - toV(v) : toV(v)
 
 /* one library file: the zones of both axes for ONE output */
 const mkFile = (name, axesZones) => ({ id: uid(), name, axes: JSON.parse(JSON.stringify(axesZones)) });
-const emptySlot = () => ({ midi: null, analog: null });
+const emptySlot = () => ({ midi: null, analog: null, gc: null });
 /* a Set List: a name, the MIDI bank number that recalls it, and its slots */
 const mkSetlist = (name, bank) => ({ id: uid(), name, bank: bank || 0, slots: [] });
 const activeSL = () => state.setlists.find(x => x.id === state.activeSetlist) || state.setlists[0];
@@ -194,8 +201,9 @@ const slots = () => activeSL().slots;
 function defaultState() {
   return {
     tab: 'midi',
-    names: { midi: 'INIT', analog: 'INIT' },    /* SETUP field, per output tab */
-    loaded: { midi: null, analog: null },        /* library file id per output tab */
+    names: { midi: 'INIT', analog: 'INIT', gc: '' },   /* SETUP field, per output tab */
+    loaded: { midi: null, analog: null, gc: null },     /* library file id per output tab (gc: the unit's slot id) */
+    gcSim: false,                                /* show the GROUND CONTROL tab against a simulated unit */
     axes: {
       yaw: {
         key: 'yaw', label: 'YAW', sub: 'left → right',
@@ -326,6 +334,10 @@ function migrateLibrary(s) {
   if (!s.setlists.find(x => x.id === s.activeSetlist)) s.activeSetlist = s.setlists[0].id;
   s.loaded = s.loaded || { midi: null, analog: null };
   s.names = s.names || { midi: 'INIT', analog: 'INIT' };
+  if (s.loaded.gc === undefined) s.loaded.gc = null;
+  if (s.names.gc === undefined) s.names.gc = '';
+  s.gcSim = !!s.gcSim;
+  for (const l of s.setlists) for (const sl of l.slots) if (sl.gc === undefined) sl.gc = null;
   if (!s.analogMirrored) {
     for (const sl of s.setlists.flatMap(l => l.slots)) {
       const m = sl.midi && s.library.midi.find(f => f.id === sl.midi);
@@ -842,6 +854,7 @@ function axisDirty(axis) {
     || (tab === 'analog' && !!axis.outputs.analog.invert !== !!fileInv(f)[axis.key]);
 }
 function updateSaveButtons() {
+  if (isGC()) return;
   for (const key of ['yaw', 'pitch']) {
     const ed = editors[key];
     if (ed && ed.saveBtn) ed.saveBtn.classList.toggle('on', axisDirty(state.axes[key]));
@@ -1265,7 +1278,7 @@ function saveProgram(asNew, tab) {
 /* ── inline rename of a Library row (double-click / double-tap) ──── */
 function startRename(id) {
   const row = libListEl.querySelector(`.lib-row[data-id="${id}"]`);
-  const f = libFile(id);
+  const f = isGC() ? { name: GCTab.nameOf(id) || '' } : libFile(id);
   if (!row || !f) return;
   const nameEl = row.querySelector('.lib-name');
   const input = document.createElement('input');
@@ -1277,7 +1290,10 @@ function startRename(id) {
   let done = false;
   const finish = (commit) => {
     if (done) return; done = true;
-    if (commit) {
+    if (commit && isGC()) {
+      const s = GCTab.parseId(id);
+      if (s) GCTab.renameSlot(s.L, s.D, input.value.trim().slice(0, 10));
+    } else if (commit) {
       const name = input.value.toUpperCase().trim().slice(0, 10) || f.name;
       f.name = name;
       if (state.loaded[state.tab] === f.id) { state.names[state.tab] = name; progName.value = name; }
@@ -1309,9 +1325,18 @@ function loadFile(id, tab) {
 }
 function refreshEditor() {
   sel = null;
-  progName.value = state.names[state.tab];
-  buildPanels();
-  for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
+  const axesEl = document.getElementById('axes'), gcEl = document.getElementById('gcTab');
+  document.body.classList.toggle('gc-tab', isGC());
+  if (isGC()) {
+    progName.value = state.names.gc || '';
+    axesEl.hidden = true; gcEl.hidden = false;
+    GCTab.syncPedals();
+  } else {
+    progName.value = state.names[state.tab];
+    gcEl.hidden = true; axesEl.hidden = false;
+    buildPanels();
+    for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
+  }
   renderLibrarian();
 }
 /* load a Set List slot: every output that has a file (the pedal's PC behavior) */
@@ -1319,10 +1344,47 @@ function loadSlot(i) {
   const sl = slots()[i];
   if (!sl) return;
   for (const tab of TAB_ORDER) if (sl[tab]) loadFile(sl[tab], tab);
+  if (sl.gc && GCTab.isConnected()) { const s = GCTab.parseId(sl.gc); if (s) GCTab.load(s.L, s.D); }
   refreshEditor();
 }
 
+/* the Library column on the GROUND CONTROL tab: the unit's Setup bank */
+function renderGcLibrarian() {
+  const on = GCTab.isConnected(), bank = GCTab.bank(), active = GCTab.activeId();
+  libTitleEl.textContent = 'LIBRARY OF SETUPS · GROUND CONTROL';
+  libListEl.classList.toggle('gc-bank', bank.length > 0);   /* two columns: the bank is long */
+  libListEl.innerHTML = bank.length
+    ? bank.map(i => {
+      const id = GCTab.idOf(i), pal = GCP.COLOR_PALETTE[i.colorIdx] || GCP.COLOR_PALETTE[7];
+      /* the loaded row glows in a see-through version of the Setup's own colour */
+      return `
+      <li class="lib-row${id === active ? ' on' : ''}" data-id="${id}" style="--row-c:${pal.hex}" title="${esc(GCTab.describe(i))}">
+        <span class="gc-dot" style="background:${pal.hex}"></span>
+        <span class="lib-id">${id}</span>
+        <span class="lib-name">${i.name ? esc(i.name) : '<span class="unnamed">unnamed</span>'}</span>
+        <button class="rowbtn" data-del type="button" title="delete this Setup from the unit">×</button>
+      </li>`;
+    }).join('')
+    : `<li class="lib-empty">${on ? (GCTab.listing() ? 'reading the unit\u2019s Setups\u2026' : 'no Setups on the unit \u2014 REFRESH SETUPS reads them') : 'connect to the Ground Control to see its Setups'}</li>`;
+  renderSetlistTools();
+  setListEl.innerHTML = slots().length
+    ? slots().map((sl, i) => {
+      const nm = sl.gc ? GCTab.nameOf(sl.gc) : null;
+      return `
+      <li class="set-row${sl.gc && sl.gc === active ? ' on' : ''}${sl.gc ? '' : ' none'}" data-idx="${i}">
+        <span class="pc">${i + 1}</span>
+        ${sl.gc ? `<span class="lib-id">${esc(sl.gc)}</span>` : ''}
+        <span class="lib-name">${sl.gc ? (nm ? esc(nm) : (nm === '' ? '<span class="unnamed">unnamed</span>' : '<span class="unnamed">not on this unit</span>')) : '\u2014 no GC setup \u2014'}</span>
+        <button class="rowbtn" data-del type="button" title="remove slot">×</button>
+      </li>`;
+    }).join('')
+    : `<li class="lib-empty">drag Setups here — order sets the PC #</li>`;
+  progNum.value = loadedPC() ?? '—';
+}
+
 function renderLibrarian() {
+  if (isGC()) { renderGcLibrarian(); return; }
+  libListEl.classList.remove('gc-bank');
   const tab = state.tab;
   libTitleEl.textContent = `LIBRARY OF SETUPS · ${tab === 'analog' ? 'ANALOG' : 'MIDI'}`;
   libListEl.innerHTML = lib().length
@@ -1441,6 +1503,19 @@ libListEl.addEventListener('click', e => {
     return;
   }
   lastLibTap = { id, time: now };
+  if (isGC()) {
+    const s = GCTab.parseId(id);
+    if (!s) return;
+    if (e.target.closest('[data-del]')) {
+      const nm = GCTab.nameOf(id);
+      const used = state.setlists.flatMap(l => l.slots).filter(sl => sl.gc === id).length;
+      if (!confirm(`Delete Setup ${id}${nm ? ` "${nm}"` : ''} from the Ground Control? This cannot be undone.${used ? ` It is used by ${used} set list slot${used > 1 ? 's' : ''}.` : ''}`)) return;
+      GCTab.remove(s.L, s.D);
+      return;
+    }
+    GCTab.load(s.L, s.D);
+    return;
+  }
   if (e.target.closest('[data-del]')) {
     const f = libFile(id, tab);
     const used = state.setlists.flatMap(l => l.slots).filter(sl => sl[tab] === id).length;
@@ -1448,7 +1523,7 @@ libListEl.addEventListener('click', e => {
     state.library[tab] = lib().filter(x => x.id !== id);
     for (const l of state.setlists) {
       for (const sl of l.slots) if (sl[tab] === id) sl[tab] = null;
-      l.slots = l.slots.filter(sl => TAB_ORDER.some(t => sl[t]));   /* drop slots left empty */
+      l.slots = l.slots.filter(sl => SLOT_KEYS.some(t => sl[t]));   /* drop slots left empty */
     }
     fillSlots(state);   /* a slot that still has its other output gets a fresh mirror */
     if (state.loaded[tab] === id) state.loaded[tab] = null;
@@ -1620,11 +1695,19 @@ wireRowDrag(libListEl, 'lib');
 wireRowDrag(setListEl, 'set');
 
 /* + new: save the current tab's zones as a NEW Setup under the SETUP name */
-document.getElementById('saveNewBtn').addEventListener('click', () => guardUnsaved('creating a new Setup', () => {
+document.getElementById('saveNewBtn').addEventListener('click', () => {
+  if (isGC()) {   /* the unit's own bank: nothing here touches the MIDI / Analog editors */
+    if (!GCTab.isConnected()) { alert('Connect to the Ground Control first.'); return; }
+    const id = GCTab.saveNew('UNTITLED');
+    if (id) setTimeout(() => startRename(id), 700);   /* after the unit echoes the new slot */
+    return;
+  }
+  guardUnsaved('creating a new Setup', () => {
   const f = saveProgram(true);
   flashProgName();
   if (f) startRename(f.id);   /* name it right away */
-}));
+  });
+});
 
 /* ── v1.7: unsaved-changes guard (per output tab) ─────────────────
    A tab is "dirty" when its editor differs from its loaded file. Anything
@@ -1708,7 +1791,8 @@ function receiveProgramChange(ch, pc, force) {
     row.classList.add('rx');
     row.addEventListener('animationend', () => row.classList.remove('rx'), { once: true });
   }
-  const names = TAB_ORDER.map(t => sl[t] ? `${OUTPUTS[t].tag}:"${libFile(sl[t], t).name}"` : `${OUTPUTS[t].tag}:—`).join(' ');
+  const names = TAB_ORDER.map(t => sl[t] ? `${OUTPUTS[t].tag}:"${libFile(sl[t], t).name}"` : `${OUTPUTS[t].tag}:—`)
+    .concat(sl.gc ? [`GC:${sl.gc}`] : []).join(' ');
   return { ok: true, msg: `PC ${pc} ch${ch} → slot ${pc} · ${names}` };
 }
 
@@ -1748,11 +1832,18 @@ function flashProgName() {
 const progNum = document.getElementById('progNum');
 const progName = document.getElementById('progName');
 progName.value = state.names[state.tab];
-progName.addEventListener('input', () => { state.names[state.tab] = progName.value.toUpperCase().slice(0, 10); saveState(); updateSaveButtons(); });
+progName.addEventListener('input', () => {
+  if (isGC()) { GCTab.rename(progName.value.slice(0, 10)); return; }
+  state.names[state.tab] = progName.value.toUpperCase().slice(0, 10); saveState(); updateSaveButtons();
+});
 
 document.getElementById('resetBtn').addEventListener('click', () => guardUnsaved('resetting the demo', () => {
-  if (!confirm('Reset the demo? This also clears the Library and Set List.')) return;
+  if (!confirm('Reset the demo? This also clears the Library and Set List, and the simulated Ground Control goes back to its factory Setups.')) return;
+  const sim = GCTab.simulator();
+  if (GCTab.isConnected()) GCTab.disconnect();
+  if (sim) sim.factoryReset();
   state = defaultState();
+  gcSimToggle.checked = false;
   updateOutTabs();
   refreshEditor();
 }));
@@ -1792,7 +1883,7 @@ function importFile(text) {
   state.activeSetlist = doc.activeSetlist || null;
   delete state.setlist;
   if (doc.receiveChannel !== undefined) { state.globalCh = doc.receiveChannel; globalChSel.value = String(state.globalCh); }
-  state.loaded = { midi: null, analog: null };
+  state.loaded = { midi: null, analog: null, gc: state.loaded.gc };
   migrateLibrary(state);          /* validates shapes, fills any half-empty slots */
   for (const f of state.library.midi.concat(state.library.analog)) for (const k of ['yaw', 'pitch']) f.axes[k] = f.axes[k] || [];
   if (slots().length) loadSlot(0); else refreshEditor();
@@ -1814,9 +1905,41 @@ document.getElementById('appVersion').textContent = 'v' + APP_VERSION;
 /* ── output tabs: MIDI · Analog Out ──────────────────────────────── */
 
 const outTabs = [...document.querySelectorAll('.out-tab')];
+/* the GROUND CONTROL tab appears when a unit can be reached: the page is
+   served by the pedal, or the footer switch stands in a simulated one */
+const gcAvailable = () => state.gcSim || GCLink.servedByPedal();
 function updateOutTabs() {
-  outTabs.forEach(t => t.classList.toggle('on', t.dataset.tab === state.tab));
+  outTabs.forEach(t => {
+    if (t.dataset.tab === 'gc') t.hidden = !gcAvailable();
+    t.classList.toggle('on', t.dataset.tab === state.tab);
+  });
 }
+const gcSimToggle = document.getElementById('gcSimToggle');
+gcSimToggle.checked = !!state.gcSim;
+gcSimToggle.addEventListener('change', () => {
+  state.gcSim = gcSimToggle.checked;
+  if (state.gcSim) { GCTab.setLinkKind('sim'); if (!GCTab.isConnected()) GCTab.connect(); }
+  else if (GCTab.linkKind() === 'sim' && GCTab.isConnected()) GCTab.disconnect();
+  if (!gcAvailable() && isGC()) state.tab = 'midi';
+  saveState();
+  updateOutTabs();
+  refreshEditor();
+});
+GCTab.init({
+  mount: document.getElementById('gcTab'),
+  linkKind: state.gcSim ? 'sim' : undefined,
+  autoConnect: state.gcSim,
+  getAxes: () => ({ pitch: state.axes.pitch.sim, yaw: state.axes.yaw.sim }),
+  setAxes: (key, v) => { state.axes[key].sim = v; },
+  onBank: () => { if (isGC()) renderLibrarian(); },
+  onLoaded: (id, name) => {
+    state.loaded.gc = id; state.names.gc = name || '';
+    if (isGC()) { progName.value = state.names.gc; renderLibrarian(); }
+    saveState();
+  },
+  onLink: on => { if (!on) { state.loaded.gc = null; state.names.gc = ''; } if (isGC()) { progName.value = state.names.gc; renderLibrarian(); } },
+});
+if (isGC() && !gcAvailable()) state.tab = 'midi';
 outTabs.forEach(t => t.addEventListener('click', () => {
   if (state.tab === t.dataset.tab) return;
   closePopover();
@@ -1826,15 +1949,13 @@ outTabs.forEach(t => t.addEventListener('click', () => {
   refreshEditor();
 }));
 updateOutTabs();
-
-buildPanels();
-for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
-renderLibrarian();
+refreshEditor();
 
 let resizeTimer = null;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
+    if (isGC()) return;
     for (const key of ['yaw', 'pitch']) render(state.axes[key]);
   }, 80);
 });

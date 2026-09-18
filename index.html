@@ -9,6 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Michroma&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="ambient.css">
 <link rel="stylesheet" href="orbit.css">
+<link rel="stylesheet" href="gc.css">
 </head>
 <body class="ambient amb-surface">
 
@@ -37,9 +38,11 @@
 <nav class="out-tabs" aria-label="output">
   <button class="out-tab ot-midi on" data-tab="midi" type="button" title="zones that send MIDI"><span class="ot-dot"></span>MIDI</button>
   <button class="out-tab ot-analog" data-tab="analog" type="button" title="zones that drive the two EXP jacks"><span class="ot-dot"></span>ANALOG OUT</button>
+  <button class="out-tab ot-gc" data-tab="gc" type="button" hidden title="the Ground Control unit: its Setups, effects and screens"><span class="ot-dot"></span>GROUND CONTROL</button>
 </nav>
 
 <main id="axes"></main>
+<div id="gcTab" hidden></div>
 
 <div class="lib-outer">
   <section class="librarian ambient amb-surface amb-chamfer amb-elevation-2 ambx-panel amb-mat-blasted amb-rounded-xl">
@@ -75,6 +78,11 @@
 </div>
 
 <footer class="hints">
+  <label class="polarity simswitch" title="show a GROUND CONTROL tab wired to a Ground Control simulated in this page">
+    <span class="pol-lbl">simulate Ground Control</span>
+    <input type="checkbox" id="gcSimToggle">
+    <span class="pol-switch"></span>
+  </label>
   <span class="foot-tools">
     <button class="ghostbtn" id="exportBtn" type="button" title="save both libraries, the set list and the receive channel to a .json file">export file</button>
     <button class="ghostbtn" id="importBtn" type="button" title="restore libraries and set list from a .json file made by export">import file</button>
@@ -125,6 +133,13 @@
   </div>
 </div>
 
+<script src="gc/protocol.js"></script>
+<script src="gc/effects.js"></script>
+<script src="gc/curve.js"></script>
+<script src="gc/factory.js"></script>
+<script src="gc/sim.js"></script>
+<script src="link.js"></script>
+<script src="gc/tab.js"></script>
 <script src="orbit.js"></script>
 </body>
 </html>

@@ -5,11 +5,14 @@ in the page header (`APP_VERSION` in `orbit.js`) and bumps with every
 feature addition.
 
 A standalone web page that demos the Orbit pedal's Setup editor: setting
-response **curves** and **zones** for the pitch and yaw axes.
-It is not connected to the device — it's a UI concept for review, based on
-David Mash's `reference/Orbit_UI_Rough.jpeg` and
-`reference/Assignment_Rough.jpeg` sketches and the email thread of
-Aug–Sep 2026.
+response **curves** and **zones** for the pitch and yaw axes, and (v1.15)
+editing the **Ground Control** unit's Setups from a third tab.
+The MIDI and Analog Out tabs are not connected to a device — they are a UI
+concept for review, based on David Mash's `reference/Orbit_UI_Rough.jpeg`
+and `reference/Assignment_Rough.jpeg` sketches and the email thread of
+Aug–Sep 2026. The Ground Control tab speaks the unit's real bridge
+protocol, against a simulated unit in the page or a real one over WiFi /
+USB.
 
 ## Run it
 
@@ -109,6 +112,39 @@ both land on the MIDI tab as overlapping zones in two colors (an OFF layer 2
 is dropped). v1.8 Setups keep their zones on the MIDI tab and get an Analog
 Out Setup mirrored from them.
 
+## The Ground Control tab (v1.15)
+
+The third output tab is the Ground Control's own editor
+(`gc_dsp/web`, ported to plain JS under `gc/`). It appears when a unit can
+be reached: when the page is served by the pedal over its WiFi, or when the
+footer switch **simulate Ground Control** is on — that wires the tab to a
+Ground Control simulated in the page (`gc/sim.js`), which answers with the
+same bytes the real unit's `bridge.cpp` does and starts with the factory
+Setup bank (A1–D3, from `gc_ui/src/presets.cpp`). The simulated unit
+persists its bank in `localStorage` like the real one's NVS; *reset demo*
+returns it to the factory bank.
+
+Panels, top to bottom: **Connection** (link: simulated / WiFi / USB,
+connect, refresh setups, ping), **Active Setup** (colour, slot, name, the
+parameters each axis drives, save / discard / delete), **Parameters**
+(value + sweep range + response curve per parameter of the assigned
+effects), **Effect Chain** (audio order), **Screens** (the unit's two round
+displays, with demo pedal sliders when simulated), **Firmware** (WiFi
+update of the unit, DSP update mode) and **Log**.
+
+On this tab the **Library of Setups** column is the unit's Setup bank,
+shown in two columns so a long bank is quick to reach; the loaded row lights
+in a see-through tint of that Setup's own colour. Tap a row to load it (`LOAD_PRESET`), double-tap to rename it on the unit,
+`×` deletes it there, **+ new** saves the live state into the first free
+slot as UNTITLED. Dragging a bank row into the **Set List** gives that
+slot a `gc` entry (the unit's slot id, e.g. `B3`), recalled with the MIDI
+and Analog Out Setups on the same program change when a unit is connected.
+The header SETUP field shows the loaded Setup's name and renames it.
+Names on the unit keep their case (10 characters, as on its screens).
+
+The wire vocabulary is unchanged (`LIST_PRESETS`, `LOAD_PRESET`, …); only
+the words on screen say Setup.
+
 ## Interactions
 
 | Gesture | Effect |
@@ -117,7 +153,7 @@ Out Setup mirrored from them.
 | double-click / double-tap inside a Controller zone | add a curve point to the topmost Controller zone there (a single tap selects the zone and, after a short pause, opens its popover; the second tap of a double-tap cancels that) |
 | select a zone | a tap on a zone or its chip selects it (dashed outline, chip border lit). **Delete** / **Backspace** removes the selected zone; **Esc** or a tap on empty travel clears the selection |
 | tap a point | popover: numeric travel/value, delete (end points can't be deleted) |
-| MIDI / ANALOG OUT tabs | switch which output's zones you are editing |
+| MIDI / ANALOG OUT / GROUND CONTROL tabs | switch which output you are editing (the third tab shows only when a Ground Control can be reached — see above) |
 | tap a zone (or its `CH·CC` chip on MIDI) | popover: type (Controller / Note / Switch / Freeze / Dead on MIDI; Controller / Switch / Dead on Analog), range %, color, the type's settings (transmit ch + CC, note, velocity, switch action / voltages + speed, linear ↔ smooth response curve), delete |
 | drag a zone's end point | resize the zone — its response curve rescales to follow |
 | drag a zone's body | move the zone, curve and all |
@@ -152,5 +188,13 @@ offline).
 - `index.html` — page shell
 - `orbit.css` — night theme overrides + app/editor styles
 - `orbit.js` — all editor logic (zone model + migration, SVG rendering, gestures, popovers, librarian, save review)
+- `link.js` — how the page reaches a Ground Control: WebSocket (page served by the pedal), Web Serial (USB) or the simulator
+- `gc.css` — the Ground Control tab's styles (on the same night tokens)
+- `gc/protocol.js` — the bridge protocol: frame codec, command / reply ids, PRESET_INFO / PRESET_MASKS (port of `gc_dsp/web/src/protocol.ts` + `types.ts`)
+- `gc/effects.js` — the effect / parameter table (port of `effects.ts`; wire-stable indices)
+- `gc/curve.js` — the per-parameter response-curve editor (port of `curve.ts`)
+- `gc/factory.js` — the factory Setup bank, extracted from `gc_ui/src/presets.cpp`
+- `gc/sim.js` — the simulated Ground Control
+- `gc/tab.js` — the tab itself (port of `main.ts` + the editor's markup)
 - `ambient.css` — vendored Ambient CSS (unmodified, attributed)
 - `reference/` — David's two source sketches
