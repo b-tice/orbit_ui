@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.15';
+const APP_VERSION = '1.16';
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -83,7 +83,11 @@ const OUTPUTS = {
   },
 };
 /* the third output has no zones: its Setups live on the Ground Control unit */
-OUTPUTS.gc = { key: 'gc', label: 'GROUND CONTROL', tag: 'GC', chips: false, types: [], gridLabel: v => String(v), valLabel: v => String(v) };
+OUTPUTS.gc = {
+  key: 'gc', label: 'GROUND CONTROL', tag: 'GC', chips: true,
+  types: ['ctl', 'dead'],                       /* a Controller = one effect parameter; Dead masks it */
+  gridLabel: v => Math.round(v / 127 * 100) + '%', valLabel: v => String(Math.round(v)),
+};
 const TAB_ORDER = ['midi', 'analog'];          /* the zone-editing outputs */
 const SLOT_KEYS = ['midi', 'analog', 'gc'];    /* what a Set List slot can hold */
 const isGC = () => state.tab === 'gc';
@@ -105,6 +109,7 @@ function mkZone(type, lo, hi, extra) {
        exit: what the output does when the pedal LEAVES the zone —
        'hold' keeps the last value, 'reset' drops it to zero */
     ch: 1, cc: 1, smooth: false, exit: 'hold',
+    eff: 0, par: 0,                 /* Ground Control: the effect + parameter this zone drives */
     points: [{ x: lo, y: 0 }, { x: hi, y: 127 }],
     /* note + switch */
     note: 60, vel: 100,
@@ -186,6 +191,7 @@ function isPlainRamp(zones) {
 const defaultOutputs = key => ({
   midi:   { zones: defaultZones(key) },
   analog: { zones: defaultAnalogZones(key), invert: false },   /* invert: 5→0 V instead of 0→5 V */
+  gc:     { zones: [] },                                       /* filled from the unit's loaded Setup */
 });
 /* the voltage a jack actually puts out for a curve value, honoring polarity */
 const jackV = (axis, v) => (axis.outputs.analog.invert ? VOLTS - toV(v) : toV(v));
@@ -335,6 +341,7 @@ function migrateLibrary(s) {
   s.loaded = s.loaded || { midi: null, analog: null };
   s.names = s.names || { midi: 'INIT', analog: 'INIT' };
   if (s.loaded.gc === undefined) s.loaded.gc = null;
+  for (const k of ['yaw', 'pitch']) if (s.axes[k] && s.axes[k].outputs && !s.axes[k].outputs.gc) s.axes[k].outputs.gc = { zones: [] };
   if (s.names.gc === undefined) s.names.gc = '';
   s.gcSim = !!s.gcSim;
   for (const l of s.setlists) for (const sl of l.slots) if (sl.gc === undefined) sl.gc = null;
@@ -405,7 +412,7 @@ const zonesAt = (axis, t) => Z(axis).filter(z => t >= z.lo - 1e-9 && t <= z.hi +
    the topmost (narrowest) one wins in the overlap and the other goes quiet. */
 /* same target: MIDI = same channel + CC · analog = same jack */
 const sameCC = (a, b) => a.type === 'ctl' && b.type === 'ctl'
-  && (state.tab === 'analog' || (a.ch === b.ch && a.cc === b.cc));
+  && (state.tab === 'analog' || (isGC() ? (a.eff === b.eff && a.par === b.par) : (a.ch === b.ch && a.cc === b.cc)));
 const overlaps = (a, b) => a.hi > b.lo && a.lo < b.hi;
 function isAbove(axis, a, b) {           /* is a drawn on top of b? */
   const o = drawOrder(axis);
@@ -524,9 +531,18 @@ function clampi(v, lo, hi) {
 
 /* ── zone labels ─────────────────────────────────────────────────── */
 
+/* Ground Control zones: the parameter's own units on the value axis */
+const gcDef = z => GCTab.paramDef(z.eff, z.par) || { name: '?', min: 0, max: 1, step: 0.01, decimals: 2, unit: '' };
+const gcUnits = (z, v) => { const d = gcDef(z); return d.min + (v / 127) * (d.max - d.min); };   /* 0–127 → units */
+const gcFromUnits = (z, u) => { const d = gcDef(z); return d.max === d.min ? 0 : (u - d.min) / (d.max - d.min) * 127; };
+const gcFormat = (z, v) => GCFX.formatValue(gcDef(z), gcUnits(z, v));
+const gcEffName = z => (GCP.EFFECT_NAMES[z.eff] || 'eff ' + z.eff);
+const gcLabel = z => `${gcEffName(z)} · ${gcDef(z).name}`.toUpperCase();
+
 function zoneShortLabel(axis, z) {
   const analog = state.tab === 'analog';
   if (z.type === 'dead') return 'DEAD';
+  if (isGC()) return gcLabel(z);
   if (z.type === 'freeze') return 'FRZ ' + axis.freeze;
   if (z.type === 'note') return '♪ ' + noteName(z.note) + ' ch' + z.ch;
   if (z.type === 'switch') {
@@ -543,6 +559,7 @@ function zoneOutput(axis, z, t) {
   if (z.type === 'ctl') {
     if (!ctlActive(axis, z, t)) return null;
     const v = curveValue(z, t);
+    if (isGC()) return `${gcDef(z).name} ${gcFormat(z, v)}`;
     return analog ? `${jackV(axis, v).toFixed(2)}V` : `CC${z.cc} ch${z.ch}=${Math.round(v)}`;
   }
   if (z.type === 'freeze') return `FRZ ${axis.freeze}`;
@@ -561,7 +578,8 @@ function zoneOutput(axis, z, t) {
    the last value sent and which zone sent it — one CC has one value, so
    whichever zone sent last decides the hold / reset shown on exit */
 const simLast = {};
-const targetKey = (axis, z) => (state.tab === 'analog' ? `${state.tab}:${axis.key}` : `${state.tab}:${z.ch}:${z.cc}`);
+const targetKey = (axis, z) => (state.tab === 'analog' ? `${state.tab}:${axis.key}`
+  : isGC() ? `gc:${z.eff}:${z.par}` : `${state.tab}:${z.ch}:${z.cc}`);
 /* runtime-only: the selected zone (tap a zone or its chip). Delete /
    Backspace removes it; Esc or a tap on empty travel clears it. */
 let sel = null;   /* { axisKey, id } */
@@ -571,6 +589,40 @@ function selectZone(axis, z) {
   sel = z ? { axisKey: axis.key, id: z.id } : null;
   if (prev && (!sel || prev.axisKey !== sel.axisKey)) render(state.axes[prev.axisKey]);
   render(axis);
+  /* Ground Control: the Parameters panel lights the row this zone drives */
+  if (isGC()) GCTab.pickParam(z && z.type === 'ctl' ? z.eff : null, z ? z.par : null);
+}
+/* Ground Control, from the Parameters panel: select the zone that drives a
+   parameter (pitch first), or add one for it on the chosen axis */
+function gcSelectParam(eff, par) {
+  for (const key of ['pitch', 'yaw']) {
+    const axis = state.axes[key];
+    const z = [...drawOrder(axis)].reverse().find(x => x.type === 'ctl' && x.eff === eff && x.par === par);
+    if (z) { selectZone(axis, z); return true; }
+  }
+  if (sel) { const a = state.axes[sel.axisKey]; sel = null; render(a); }   /* keep the row lit: it has no zone yet */
+  return false;
+}
+/* take a parameter off the pedal: drop every zone that drives it, on both strips */
+function gcUnmapParam(eff, par) {
+  for (const key of ['pitch', 'yaw']) {
+    const axis = state.axes[key];
+    const gone = Z(axis).filter(z => z.type === 'ctl' && z.eff === eff && z.par === par);
+    if (!gone.length) continue;
+    for (const z of gone) { if (isSel(axis, z)) sel = null; for (const k of Object.keys(simLast)) if (simLast[k].zoneId === z.id) delete simLast[k]; }
+    setZ(axis, Z(axis).filter(z => !gone.includes(z)));
+    closePopover();
+    commit(axis);
+  }
+  GCTab.pickParam(null, null);
+}
+function gcAddZoneFor(axisKey, eff, par) {
+  const axis = state.axes[axisKey];
+  const z = mkZone('ctl', 0.2, 0.8, { color: nextColor(axis), eff, par });
+  Z(axis).push(z);
+  commit(axis);
+  selectZone(axis, z);
+  closePopover();
 }
 /* runtime-only: which Switch zones the sim marker has toggled on, and when
    each last toggled either way (for the brief glow that marks the toggle) */
@@ -601,7 +653,7 @@ function buildPanels() {
             <span class="pol-switch"></span>
             <span class="pol-state" data-polstate>${axis.outputs.analog.invert ? '5→0V' : '0→5V'}</span>
           </label>` : ''}
-          <button class="ghostbtn savebtn" data-save type="button" title="save this tab's Setup to its Library (lights up when this axis has unsaved changes)">save</button>
+          <button class="ghostbtn savebtn" data-save type="button" title="${state.tab === 'gc' ? 'write the live state into the loaded slot on the unit (lights up when it has unsaved edits)' : 'save this tab\'s Setup to its Library (lights up when this axis has unsaved changes)'}">save</button>
           <button class="ghostbtn" data-addzone type="button" title="add a zone — pick its type in the popover">+ Zone</button>
         </div>
       </div>
@@ -610,6 +662,7 @@ function buildPanels() {
     const svg = panel.querySelector('svg');
     editors[key] = { svg, outEl: panel.querySelector('[data-out]'), saveBtn: panel.querySelector('[data-save]') };
     editors[key].saveBtn.addEventListener('click', () => {
+      if (isGC()) { GCTab.save(); flashProgName(); return; }   /* SAVE_PRESET into the loaded slot */
       saveProgram(false);
       flashProgName();
     });
@@ -631,7 +684,7 @@ function chipLayout(axis, g) {
   const rows = [];
   const chips = ctl.map(z => {
     const label = zoneShortLabel(axis, z);
-    const w = label.length * 6.4 + 16;
+    const w = label.length * 6.9 + 24;   /* Michroma runs wide; room for the colour dot at the left */
     const cx = (g.tx(z.lo) + g.tx(z.hi)) / 2;
     let row = rows.findIndex(right => right < cx - w / 2 - 4);
     if (row < 0) { row = rows.length; rows.push(0); }
@@ -649,7 +702,8 @@ function axisGeom(axis) {
   /* chip rows decide how tall the header band is */
   const probe = chipLayout(axis, { tx });
   const top = 12 + probe.rows * GEO.chipRow + 4;
-  const h = GEO.height + (probe.rows - 1) * GEO.chipRow;
+  /* the Ground Control strips are half again as tall: the curve IS the sweep there */
+  const h = Math.round(GEO.height * (isGC() ? 1.5 : 1)) + (probe.rows - 1) * GEO.chipRow;
   const y0 = top, y1 = h - GEO.bottom;
   return {
     w, h, x0, x1, y0, y1, tx,
@@ -676,12 +730,17 @@ function render(axis) {
   /* on an inverted analog axis the graph stays put but the labels read the
      real voltage: 5.0V at the bottom, 0.0V at the top */
   const inv = state.tab === 'analog' && !!axis.outputs.analog.invert;
+  /* Ground Control: the value axis reads in the selected (else topmost)
+     Controller zone's parameter units — each zone has its own scale */
+  const gz = isGC() ? (zoneById(axis, sel && sel.axisKey === axis.key ? sel.id : null) || [...drawOrder(axis)].reverse().find(z => z.type === 'ctl') || null) : null;
+  const gridLabel = gz && gz.type === 'ctl' ? (v => gcFormat(gz, v)) : OUT().gridLabel;
   for (const v of [0, 63.5, 127]) {
     const y = g.ty(v);
     const lv = v === 63.5 ? 64 : v;
     parts.push(`<line x1="${g.x0}" y1="${y}" x2="${g.x1}" y2="${y}" stroke="var(--well-line)" stroke-dasharray="2 5"/>`);
-    parts.push(`<text x="${g.x0 - 8}" y="${y + 3}" font-size="9" text-anchor="end">${OUT().gridLabel(inv ? 127 - lv : lv)}</text>`);
+    parts.push(`<text x="${g.x0 - 8}" y="${y + 3}" font-size="9" text-anchor="end">${gridLabel(inv ? 127 - lv : lv)}</text>`);
   }
+  if (gz && gz.type === 'ctl') parts.push(`<text x="${g.x0 - 8}" y="${g.y0 - 6}" font-size="8" text-anchor="end" fill="${colorOf(gz).c}">${gcDef(gz).name.toUpperCase()}</text>`);
   /* travel ticks */
   for (const t of [0, 0.25, 0.5, 0.75, 1]) {
     const x = g.tx(t);
@@ -775,7 +834,7 @@ function render(axis) {
     parts.push(`<g data-role="chip" data-id="${c.z.id}" style="cursor:pointer">${warn ? `<title>overlaps another Controller on the same channel and CC — the topmost one wins</title>` : ''}
       <rect x="${c.cx - c.w / 2}" y="${y}" width="${c.w}" height="17" rx="8.5" fill="${warn ? 'var(--warn-fill)' : 'var(--chip-fill)'}" stroke="${selected ? 'var(--sim)' : (warn ? 'var(--warn)' : col.c)}" stroke-opacity="${selected || warn ? 1 : 0.7}" stroke-width="${selected ? 2 : 1}"${selected ? ` filter="url(#glow-sim-${axis.key})"` : ''}/>
       <circle cx="${c.cx - c.w / 2 + 9}" cy="${y + 8.5}" r="3" fill="${col.c}"/>
-      <text x="${c.cx + 4}" y="${y + 12}" font-size="8" text-anchor="middle" class="chip-label">${c.label}</text>
+      <text x="${c.cx + 6}" y="${y + 12}" font-size="8" text-anchor="middle" class="chip-label">${c.label}</text>
     </g>`);
   }
 
@@ -811,7 +870,7 @@ function render(axis) {
     if (z.type === 'ctl') {
       if (here && ctlActive(axis, z, axis.sim)) {
         const key = targetKey(axis, z);
-        simLast[key] = { zoneId: z.id, v: curveValue(z, axis.sim), label: analog ? '' : `CC${z.cc} ch${z.ch}=` };
+        simLast[key] = { zoneId: z.id, v: curveValue(z, axis.sim), label: analog ? '' : isGC() ? `${gcDef(z).name} ` : `CC${z.cc} ch${z.ch}=` };
         activeKeys.add(key);
         outs.push(zoneOutput(axis, z, axis.sim));
       }
@@ -829,6 +888,7 @@ function render(axis) {
     const m = simLast[key];
     const z = zoneById(axis, m.zoneId);
     if (!z) continue;                        /* belongs to the other axis, or was deleted */
+    if (isGC()) { idle.push(`${m.label}${gcFormat(z, m.v)} hold`); continue; }   /* the unit holds the last value */
     if (z.exit === 'reset') m.v = 0;
     idle.push(`${m.label}${fmt(m.v)} ${z.exit === 'reset' ? 'reset' : 'hold'}`);
   }
@@ -840,6 +900,68 @@ function commit(axis) {
   for (const z of Z(axis)) if (z.type === 'ctl') normalizePoints(z);
   render(axis);
   saveState();
+  if (isGC()) scheduleGcCompile(axis);
+  updateSaveButtons();
+}
+
+/* ── Ground Control: zones → frames ──────────────────────────────────
+   One entry per (effect, parameter) the axis drives: the sweep range in
+   the parameter's units and a 33-point curve over the WHOLE travel — the
+   unit stores exactly that (SET_THRESH + SET_CURVE). Where no zone for that
+   target is active the curve holds the nearer end; a Dead zone over it
+   holds too. Overlapping zones on one target: the topmost sends. */
+const gcCompileTimers = {};
+function scheduleGcCompile(axis) {
+  clearTimeout(gcCompileTimers[axis.key]);
+  gcCompileTimers[axis.key] = setTimeout(() => gcCompileAxis(axis), 60);
+}
+function gcCompileAxis(axis) {
+  const N = GCCurve.LUT_N;
+  const order = drawOrder(axis).filter(z => z.type === 'ctl');   /* bottom → top */
+  const targets = new Map();
+  for (const z of order) { const k = z.eff + ',' + z.par; if (!targets.has(k)) targets.set(k, []); targets.get(k).push(z); }
+  const list = [];
+  for (const [, zs] of targets) {
+    const z0 = zs[zs.length - 1], def = gcDef(z0);
+    const samples = new Array(N).fill(null);
+    for (let i = 0; i < N; i++) {
+      const t = i / (N - 1);
+      for (let j = zs.length - 1; j >= 0; j--) if (ctlActive(axis, zs[j], t)) { samples[i] = gcUnits(zs[j], curveValue(zs[j], t)); break; }
+    }
+    if (!samples.some(v => v !== null)) continue;               /* fully masked: not an assignment */
+    for (let i = 0; i < N; i++) {                                /* hold the nearer end outside */
+      if (samples[i] !== null) continue;
+      let l = i - 1, r = i + 1;
+      while (l >= 0 && samples[l] === null) l--;
+      while (r < N && samples[r] === null) r++;
+      const dl = l < 0 ? Infinity : i - l, dr = r >= N ? Infinity : r - i;
+      samples[i] = dl <= dr ? samples[l] : samples[r];
+    }
+    const lo = Math.min(...samples), hi = Math.max(...samples);
+    const q = v => Math.round(v / def.step) * def.step;          /* the parameter's own resolution */
+    const qlo = +q(lo).toFixed(6), qhi = +q(hi).toFixed(6);
+    const lut = samples.map(v => (qhi > qlo ? Math.round((v - qlo) / (qhi - qlo) * 255) : 0)).map(v => Math.max(0, Math.min(255, v)));
+    list.push({ eff: z0.eff, par: z0.par, lo: qlo, hi: qhi, lut });
+  }
+  GCTab.applyAxis(axis.key === 'pitch' ? 0 : 1, list);
+}
+/* the unit's assignments → zones (after a Setup loads) */
+function gcAdoptZones(byAxis) {
+  for (const key of ['pitch', 'yaw']) {
+    const list = byAxis[key === 'pitch' ? 0 : 1] || [];
+    const old = state.axes[key].outputs.gc.zones;
+    state.axes[key].outputs.gc.zones = list.map((a, i) => {
+      const prev = old.find(z => z.type === 'ctl' && z.eff === a.eff && z.par === a.par);
+      return mkZone('ctl', a.lo, a.hi, {
+        eff: a.eff, par: a.par, color: prev ? prev.color : i % PALETTE.length,
+        points: a.points.map(pt => ({ x: pt.x, y: Math.max(0, Math.min(127, pt.y * 127)) })),
+      });
+    });
+    for (const z of state.axes[key].outputs.gc.zones) normalizePoints(z);
+  }
+  sel = null;
+  if (isGC()) { for (const key of ['yaw', 'pitch']) if (editors[key]) render(state.axes[key]); }
+  saveState();
   updateSaveButtons();
 }
 
@@ -847,6 +969,7 @@ function commit(axis) {
    tab's loaded file — or when nothing is loaded yet, so the work gets saved */
 function axisDirty(axis) {
   const tab = state.tab;
+  if (tab === 'gc') return GCTab.dirty();       /* the unit's live state vs its saved slot */
   const f = state.loaded[tab] ? libFile(state.loaded[tab], tab) : null;
   if (!f) return true;
   const name = (state.names[tab] || 'UNTITLED').toUpperCase().slice(0, 10);
@@ -854,7 +977,6 @@ function axisDirty(axis) {
     || (tab === 'analog' && !!axis.outputs.analog.invert !== !!fileInv(f)[axis.key]);
 }
 function updateSaveButtons() {
-  if (isGC()) return;
   for (const key of ['yaw', 'pitch']) {
     const ed = editors[key];
     if (ed && ed.saveBtn) ed.saveBtn.classList.toggle('on', axisDirty(state.axes[key]));
@@ -1016,10 +1138,26 @@ function addPointAt(axis, px, py) {
 /* + Zone: a new Controller zone over the middle third, on top, in the next
    color; its popover opens so the type can be picked right away */
 function addZone(axis, cx, cy) {
-  const z = mkZone('ctl', 0.33, 0.67, { color: nextColor(axis), ch: 1, cc: nextCC(axis) });
+  const z = mkZone('ctl', 0.33, 0.67, { color: nextColor(axis), ch: 1, cc: nextCC(axis), ...(isGC() ? nextAssign(axis) : {}) });
   Z(axis).push(z);
   commit(axis);
   openZonePopover(axis, z, cx, cy);
+}
+/* Ground Control: the first (effect, parameter) not already on this axis —
+   effects of the loaded Setup first, each at its Mix (or first) parameter */
+function nextAssign(axis) {
+  const used = new Set(Z(axis).filter(z => z.type === 'ctl').map(z => z.eff + ',' + z.par));
+  const cands = [];
+  const p = GCTab.active();
+  const chain = p ? (p.chain.length ? p.chain : []) : [];
+  const effs = [...chain, ...GCFX.EFFECTS.map(e => e.id).filter(e => !chain.includes(e))];
+  for (const e of effs) {
+    const ps = GCFX.EFFECTS[e].params;
+    const mix = ps.findIndex(q => q.name === 'Mix');
+    const order = mix >= 0 ? [mix, ...ps.map((_, i) => i).filter(i => i !== mix)] : ps.map((_, i) => i);
+    for (const q of order) cands.push({ eff: e, par: q });
+  }
+  return cands.find(c => !used.has(c.eff + ',' + c.par)) || { eff: 0, par: 0 };
 }
 function nextCC(axis) {
   const used = new Set(Z(axis).filter(z => z.type === 'ctl').map(z => z.cc));
@@ -1083,12 +1221,14 @@ function openPointPopover(axis, zid, idx, cx, cy) {
       <span class="pop-note">${state.tab === 'analog' ? 'EXP ' + jackOf(axis) : zoneShortLabel(axis, z)}</span></h3>
     <div class="pop-rows">
       ${numRow('Travel %', 'ppx', (p.x * 100).toFixed(1), 0, 100, end ? 'readonly' : '')}
-      ${analog ? numRow('Volts', 'ppy', toV(p.y).toFixed(2), 0, VOLTS, 'step="0.01"') : numRow('Value', 'ppy', Math.round(p.y), 0, 127)}
+      ${analog ? numRow('Volts', 'ppy', toV(p.y).toFixed(2), 0, VOLTS, 'step="0.01"')
+        : isGC() ? numRow(gcDef(z).name + (gcDef(z).unit ? ' ' + gcDef(z).unit : ''), 'ppy', gcUnits(z, p.y).toFixed(gcDef(z).decimals), gcDef(z).min, gcDef(z).max, `step="${gcDef(z).step}"`)
+        : numRow('Value', 'ppy', Math.round(p.y), 0, 127)}
       ${end ? '<div class="pop-note">end points follow the zone\'s edges — drag the edge to move it</div>'
             : '<button class="dangerbtn" id="pdel" type="button">delete point</button>'}
     </div>`, cx, cy);
   if (!end) wireNum(axis, 'ppx', v => { p.x = Math.max(z.lo, Math.min(z.hi, v / 100)); });
-  wireNum(axis, 'ppy', v => { p.y = analog ? Math.max(0, Math.min(127, fromV(v))) : clampi(v, 0, 127); });
+  wireNum(axis, 'ppy', v => { p.y = analog ? Math.max(0, Math.min(127, fromV(v))) : isGC() ? Math.max(0, Math.min(127, gcFromUnits(z, v))) : clampi(v, 0, 127); });
   const del = pop.querySelector('#pdel');
   if (del) del.addEventListener('click', () => { z.points.splice(idx, 1); closePopover(); commit(axis); });
 }
@@ -1106,7 +1246,18 @@ function openZonePopover(axis, z, cx, cy) {
       style="--sw:${p.c}" title="${p.name}"></button>`).join('');
 
   let rows = '';
-  if (z.type === 'ctl') {
+  if (z.type === 'ctl' && isGC()) {
+    const d = gcDef(z);
+    const effOpts = GCFX.EFFECTS.map(e => `<option value="${e.id}"${e.id === z.eff ? ' selected' : ''}>${esc(e.name)}</option>`).join('');
+    const parOpts = (GCFX.EFFECTS[z.eff] || { params: [] }).params.map((q, i) => `<option value="${i}"${i === z.par ? ' selected' : ''}>${esc(q.name)}${q.unit ? ' (' + q.unit + ')' : ''}</option>`).join('');
+    rows = `<div class="pop-row"><label>Effect</label><select id="zeff" class="pop-select">${effOpts}</select></div>
+      <div class="pop-row"><label>Parameter</label><select id="zpar" class="pop-select">${parOpts}</select></div>
+      <div class="pop-row"><label>Sweep</label><span class="pop-note">${GCFX.formatValue(d, gcUnits(z, Math.min(...z.points.map(q => q.y))))} → ${GCFX.formatValue(d, gcUnits(z, Math.max(...z.points.map(q => q.y))))}</span></div>
+      <div class="pop-row"><label>Response curve</label>
+        <button class="ghostbtn ${z.smooth ? 'on' : ''}" id="zsmooth" type="button" title="linear ↔ smooth (monotone cubic) interpolation between the points">smooth</button></div>
+      <div class="pop-note">drag the end points to set the sweep range in ${d.name}'s own units · double-click the curve to add points · outside the zone the unit holds the nearer end</div>
+      ${ccConflict(axis, z) ? `<div class="pop-note warn">overlaps another zone on the same parameter — where they overlap only the topmost (narrowest) one drives it</div>` : ''}`;
+  } else if (z.type === 'ctl') {
     rows = `${analog ? '' : `${numRow('Transmit ch', 'zch', z.ch, 1, 16)}
       ${numRow('CC #', 'zcc', z.cc, 0, 127)}`}
       <div class="pop-row"><label>Response curve</label>
@@ -1179,6 +1330,14 @@ function openZonePopover(axis, z, cx, cy) {
   };
   wireNum(axis, 'zlo', v => setRange(v / 100, z.hi));
   wireNum(axis, 'zhi', v => setRange(z.lo, v / 100));
+  const zeff = pop.querySelector('#zeff'), zpar = pop.querySelector('#zpar');
+  if (zeff) zeff.addEventListener('change', () => {
+    z.eff = +zeff.value;
+    const ps = GCFX.EFFECTS[z.eff].params, mix = ps.findIndex(q => q.name === 'Mix');
+    z.par = mix >= 0 ? mix : 0;
+    commit(axis); reopen();
+  });
+  if (zpar) zpar.addEventListener('change', () => { z.par = +zpar.value; commit(axis); reopen(); });
   wireNum(axis, 'zch', v => { z.ch = clampi(v, 1, 16); });
   wireNum(axis, 'zcc', v => { z.cc = clampi(v, 0, 127); });
   wireNum(axis, 'zvel', v => { z.vel = clampi(v, 1, 127); });
@@ -1325,18 +1484,16 @@ function loadFile(id, tab) {
 }
 function refreshEditor() {
   sel = null;
-  const axesEl = document.getElementById('axes'), gcEl = document.getElementById('gcTab');
+  const axesEl = document.getElementById('axes'), gcEl = document.getElementById('gcTab'), gcTop = document.getElementById('gcTop');
   document.body.classList.toggle('gc-tab', isGC());
-  if (isGC()) {
-    progName.value = state.names.gc || '';
-    axesEl.hidden = true; gcEl.hidden = false;
-    GCTab.syncPedals();
-  } else {
-    progName.value = state.names[state.tab];
-    gcEl.hidden = true; axesEl.hidden = false;
-    buildPanels();
-    for (const key of ['yaw', 'pitch']) commit(state.axes[key]);
+  progName.value = isGC() ? (state.names.gc || '') : state.names[state.tab];
+  gcEl.hidden = !isGC(); gcTop.hidden = !isGC(); axesEl.hidden = false;
+  buildPanels();
+  for (const key of ['yaw', 'pitch']) {
+    if (isGC()) { for (const z of Z(state.axes[key])) if (z.type === 'ctl') normalizePoints(z); render(state.axes[key]); }
+    else commit(state.axes[key]);
   }
+  updateSaveButtons();
   renderLibrarian();
 }
 /* load a Set List slot: every output that has a file (the pedal's PC behavior) */
@@ -1930,7 +2087,11 @@ GCTab.init({
   linkKind: state.gcSim ? 'sim' : undefined,
   autoConnect: state.gcSim,
   getAxes: () => ({ pitch: state.axes.pitch.sim, yaw: state.axes.yaw.sim }),
-  setAxes: (key, v) => { state.axes[key].sim = v; },
+  onSetupZones: gcAdoptZones,
+  onParamPick: gcSelectParam,
+  onAddZone: gcAddZoneFor,
+  onUnmap: gcUnmapParam,
+  onDirty: () => updateSaveButtons(),
   onBank: () => { if (isGC()) renderLibrarian(); },
   onLoaded: (id, name) => {
     state.loaded.gc = id; state.names.gc = name || '';
@@ -1939,6 +2100,8 @@ GCTab.init({
   },
   onLink: on => { if (!on) { state.loaded.gc = null; state.names.gc = ''; } if (isGC()) { progName.value = state.names.gc; renderLibrarian(); } },
 });
+/* the Screens panel sits right under the strips, above the Library */
+document.getElementById('gcTop').appendChild(document.getElementById('gc-screens'));
 if (isGC() && !gcAvailable()) state.tab = 'midi';
 outTabs.forEach(t => t.addEventListener('click', () => {
   if (state.tab === t.dataset.tab) return;
@@ -1955,7 +2118,6 @@ let resizeTimer = null;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
-    if (isGC()) return;
     for (const key of ['yaw', 'pitch']) render(state.axes[key]);
   }, 80);
 });

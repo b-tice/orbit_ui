@@ -112,35 +112,60 @@ both land on the MIDI tab as overlapping zones in two colors (an OFF layer 2
 is dropped). v1.8 Setups keep their zones on the MIDI tab and get an Analog
 Out Setup mirrored from them.
 
-## The Ground Control tab (v1.15)
+## The Ground Control tab (v1.15 · zone editor v1.16)
 
-The third output tab is the Ground Control's own editor
-(`gc_dsp/web`, ported to plain JS under `gc/`). It appears when a unit can
-be reached: when the page is served by the pedal over its WiFi, or when the
-footer switch **simulate Ground Control** is on — that wires the tab to a
-Ground Control simulated in the page (`gc/sim.js`), which answers with the
-same bytes the real unit's `bridge.cpp` does and starts with the factory
-Setup bank (A1–D3, from `gc_ui/src/presets.cpp`). The simulated unit
-persists its bank in `localStorage` like the real one's NVS; *reset demo*
-returns it to the factory bank.
+The third output tab edits the Ground Control unit's Setups. It appears
+when a unit can be reached: when the page is served by the pedal over its
+WiFi, or when the footer switch **simulate Ground Control** is on — that
+wires the tab to a Ground Control simulated in the page (`gc/sim.js`),
+which answers with the same bytes the real unit's `bridge.cpp` does and
+starts with the factory Setup bank (A1–D3, from `gc_ui/src/presets.cpp`).
+The simulated unit persists its bank in `localStorage` like the real one's
+NVS; *reset demo* returns it to the factory bank.
 
-Panels, top to bottom: **Connection** (link: simulated / WiFi / USB,
-connect, refresh setups, ping), **Active Setup** (colour, slot, name, the
-parameters each axis drives, save / discard / delete), **Parameters**
-(value + sweep range + response curve per parameter of the assigned
-effects), **Effect Chain** (audio order), **Screens** (the unit's two round
-displays, with demo pedal sliders when simulated), **Firmware** (WiFi
-update of the unit, DSP update mode) and **Log**.
+**The strips are the editor (v1.16).** On this tab the YAW and PITCH
+strips hold the loaded Setup's assignments: a **Controller zone drives one
+effect parameter** (picked in its popover, from the unit's effect table)
+over its travel range, and its curve is the sweep — the end points are the
+parameter's low and high in the parameter's own units (Hz, ms, %, st), and
+the value axis reads in the units of the selected (else topmost) zone. The
+chip reads `EFFECT · PARAMETER`. A **Dead** zone masks a Controller under
+it; two Controllers on the same parameter: the topmost sends. Note, Switch
+and Freeze have no meaning on the unit and are not offered here.
 
-On this tab the **Library of Setups** column is the unit's Setup bank,
-shown in two columns so a long bank is quick to reach; the loaded row lights
-in a see-through tint of that Setup's own colour. Tap a row to load it (`LOAD_PRESET`), double-tap to rename it on the unit,
-`×` deletes it there, **+ new** saves the live state into the first free
-slot as UNTITLED. Dragging a bank row into the **Set List** gives that
-slot a `gc` entry (the unit's slot id, e.g. `B3`), recalled with the MIDI
-and Analog Out Setups on the same program change when a unit is connected.
-The header SETUP field shows the loaded Setup's name and renames it.
-Names on the unit keep their case (10 characters, as on its screens).
+Every edit is compiled and sent to the unit as you make it: per
+parameter, `SET_ASSIGN` (REPLACE for the first, ADD for the rest, which
+also drops what left), `SET_THRESH` (the curve's low and high) and
+`SET_CURVE` (a 33-point table over the whole travel; outside the zone the
+unit holds the nearer end, a Dead zone holds too). Loading a Setup goes the
+other way: the unit's assignments, sweep ranges and tables become zones
+(the table's moving part is the zone, its points are a simplified trace,
+at most 8). The axis **save** buttons light while the unit's live state
+differs from the slot and send `SAVE_PRESET`; **discard** reloads the slot.
+
+The strips are half again as tall on this tab. Right under them sit
+**Screens** (the unit's two round displays, following the ▲ markers) and
+the Library / Set List; below those: **Connection** (link: simulated / WiFi
+/ USB, connect, refresh setups, ping), **Active Setup** (colour, slot,
+name, save / discard / delete), **Parameters** (the static value of every parameter of the
+Setup's effects — tap a row to light it and select the zone that drives it
+on the strip, which then reads in that parameter's units; a tap on a zone
+lights its row in return; the LED at the left of each row is the map
+toggle — lit means a zone drives it: tap a dark LED and pick PITCH or YAW
+to add a zone for it, tap a lit one to take it off the pedal on both
+strips; an axis left with no zone keeps its last parameter on the unit
+until you add one, since the unit never runs an axis empty), **Effect Chain** (audio order), **Firmware** (WiFi update of the
+unit, DSP update mode) and **Log**.
+
+The **Library of Setups** column is the unit's Setup bank, shown in two
+columns; the loaded row lights in a see-through tint of that Setup's own
+colour. Tap a row to load it (`LOAD_PRESET`), double-tap to rename it on
+the unit, `×` deletes it there, **+ new** saves the live state into the
+first free slot as UNTITLED. Dragging a bank row into the **Set List**
+gives that slot a `gc` entry (the unit's slot id, e.g. `B3`), recalled
+with the MIDI and Analog Out Setups on the same program change when a unit
+is connected. The header SETUP field shows the loaded Setup's name and
+renames it. Names on the unit keep their case (10 characters).
 
 The wire vocabulary is unchanged (`LIST_PRESETS`, `LOAD_PRESET`, …); only
 the words on screen say Setup.
@@ -192,9 +217,9 @@ offline).
 - `gc.css` — the Ground Control tab's styles (on the same night tokens)
 - `gc/protocol.js` — the bridge protocol: frame codec, command / reply ids, PRESET_INFO / PRESET_MASKS (port of `gc_dsp/web/src/protocol.ts` + `types.ts`)
 - `gc/effects.js` — the effect / parameter table (port of `effects.ts`; wire-stable indices)
-- `gc/curve.js` — the per-parameter response-curve editor (port of `curve.ts`)
+- `gc/curve.js` — the 33-point curve table helpers (port of `curve.ts`; the strips replaced its editor in v1.16)
 - `gc/factory.js` — the factory Setup bank, extracted from `gc_ui/src/presets.cpp`
 - `gc/sim.js` — the simulated Ground Control
-- `gc/tab.js` — the tab itself (port of `main.ts` + the editor's markup)
+- `gc/tab.js` — the tab's settings panels, link events, and the zones ⇄ frames compile / decompile (port of `main.ts`)
 - `ambient.css` — vendored Ambient CSS (unmodified, attributed)
 - `reference/` — David's two source sketches

@@ -16,6 +16,15 @@
   const lowestBit = m => { for (let e = 0; e < MAX_E; e++) if (m & (1 << e)) return e; return -1; };
 
   let hooks = {}, ui = {}, link = null, linkKind = 'sim', sim = null;
+  let lastApplied = [new Map(), new Map()];   /* per axis: 'eff,par' → { lo, hi, lut } — what the strips drive */
+  const IDENTITY = Array.from({ length: C.LUT_N }, (_, i) => Math.round(i * 255 / (C.LUT_N - 1)));
+  class LutHolder {
+    constructor() { this.table = null; }
+    lut() { return new Uint8Array(this.table || IDENTITY); }
+    setFromLut(lut) { this.table = Array.from(lut); }
+    isIdentity() { return !this.table || this.table.every((v, i) => Math.abs(v - IDENTITY[i]) <= 1); }
+    sample(x) { return C.sampleLut(this.table || IDENTITY, x); }
+  }
   const presetCache = new Map();
   let activeSlot = null, activePreset = null, editorDirty = false, listInProgress = false, lastPingAt = 0;
   const rows = [], rowIndex = new Map(), effectCards = new Map();
@@ -31,16 +40,6 @@
       <text class="value-text" x="120" y="138"></text>
       <text class="banner" x="120" y="208"></text>
     </svg>`;
-  const axisChain = (a, label, sub) => `
-    <div class="axis-chain" id="gc-chain-${a}">
-      <h4>${label} <small>${sub}</small></h4>
-      <div class="effects-list"></div>
-      <div class="add-row effect-row">
-        <select class="eff-sel" disabled></select>
-        <select class="par-sel" disabled></select>
-        <div class="row-actions"><button class="ghostbtn add-btn" type="button" disabled>add</button></div>
-      </div>
-    </div>`;
   function template() {
     return `
     <section class="${PANEL}" id="gc-conn">
@@ -65,16 +64,12 @@
         <button class="ghostbtn" id="gc-discard" type="button" disabled title="reload this slot's saved values from the unit">discard</button>
         <button class="ghostbtn" id="gc-delete" type="button" disabled title="delete this Setup from the unit">delete</button>
       </div>
-      <div class="chains">
-        ${axisChain(0, 'PITCH', 'heel → toe')}
-        ${axisChain(1, 'YAW', 'left → right')}
-      </div>
-      <div class="gc-help">Each row is one parameter the pedal axis drives. <b>Replace</b> makes the row's pick the only one on that axis; <b>add</b> below puts another parameter on the same axis.</div>
+      <div class="gc-help">The YAW and PITCH zones above are this Setup's assignments: a Controller zone drives one effect parameter over its travel, its curve sets the sweep. Edits go to the unit as you make them; <b>save</b> (in an axis header) writes them into the slot.</div>
     </section>
     <section class="${PANEL}" id="gc-params">
       <div class="gc-head"><h3>PARAMETERS</h3><span class="gc-status" id="gc-params-note"></span></div>
       <div id="gc-param-grid"></div>
-      <div class="gc-help">Top slider = current value. Lower track = the pedal's sweep range (yellow low, orange high). The dot lights while the unit streams that parameter. Open <b>curve</b> to shape the sweep.</div>
+      <div class="gc-help">The static value of every parameter of the effects in this Setup. Parameters a zone drives follow the pedal (the dot lights while the unit streams them); the rest hold what you set here.</div>
     </section>
     <section class="${PANEL}" id="gc-chain">
       <div class="gc-head"><h3>EFFECT CHAIN</h3></div>
@@ -82,12 +77,10 @@
       <div class="gc-help">Audio order on the DSP. ▲ ▼ reorder; changes apply at once and save with the Setup.</div>
     </section>
     <section class="${PANEL}" id="gc-screens">
-      <div class="gc-head"><h3>SCREENS</h3><span class="gc-status">what the unit's two displays show</span></div>
+      <div class="gc-head"><h3>SCREENS</h3><span class="gc-status">what the unit's two displays show — drag the ▲ markers above to play the pedal</span></div>
       <div class="screens-row">
-        <div class="screen-emu">${screenSvg('gc-screen-pitch')}<span class="label">PITCH</span>
-          <label class="pedal" data-pedal="pitch"><span>heel</span><input type="range" min="0" max="1" step="0.001"><span>toe</span></label></div>
-        <div class="screen-emu">${screenSvg('gc-screen-yaw')}<span class="label">YAW</span>
-          <label class="pedal" data-pedal="yaw"><span>left</span><input type="range" min="0" max="1" step="0.001"><span>right</span></label></div>
+        <div class="screen-emu">${screenSvg('gc-screen-pitch')}<span class="label">PITCH</span></div>
+        <div class="screen-emu">${screenSvg('gc-screen-yaw')}<span class="label">YAW</span></div>
       </div>
     </section>
     <section class="${PANEL}" id="gc-fw">
@@ -131,7 +124,6 @@
     ui.ping.disabled = !on; ui.refresh.disabled = !on; ui.dspDfu.disabled = !on;
     ui.linkSel.disabled = on;
     ui.paramGrid.querySelectorAll('input').forEach(el => { el.disabled = !on; });
-    for (const l of ui.mount.querySelectorAll('.pedal')) l.hidden = !(on && linkKind === 'sim');
     if (activePreset) renderActivePreset();
     renderChainList();
     renderScreens();
@@ -181,53 +173,71 @@
     row.threshReadout.className = 'thresh-readout';
     row.nameCell.className = 'param-name';
     row.nameCell.innerHTML = `<span class="live-dot"></span>${esc(def.name)}`;
-    /* curve edits are throttled like the sliders */
-    let cLast = 0, cTimer = null, cPend = null;
-    const flushCurve = lut => { tx(G.frames.setCurve(row.eff, row.par, lut)); markEditorDirty(); };
-    row.curveEditor = new C.CurveEditor({
-      onChange: lut => {
-        const now = performance.now();
-        if (now - cLast >= 25) { cLast = now; flushCurve(lut); }
-        else { cPend = lut; if (cTimer == null) cTimer = setTimeout(() => { cTimer = null; cLast = performance.now(); if (cPend) flushCurve(cPend); }, 25 - (now - cLast)); }
-      },
-    });
+    /* the unit's response table for this parameter, kept verbatim (the
+       zones on the strips are its editor) */
+    row.curveEditor = new LutHolder();
     refreshValueReadout(row); refreshThreshReadout(row);
     attachThrottledSend(row.valueInput, () => sendParam(row));
     attachThrottledSend(row.thLoInput, () => sendThresh(row, 'lo'));
     attachThrottledSend(row.thHiInput, () => sendThresh(row, 'hi'));
     return row;
   }
+  /* a row shows the parameter's static value. Its sweep range and curve
+     (thLo / thHi / curveEditor) are kept on the row as the unit's state but
+     are edited as zones on the axis strips, so they have no DOM here. */
+  let selectedParam = null;   /* 'eff,par' of the row lit by a click (or by a zone tap on a strip) */
   function rowDom(row) {
     const div = document.createElement('div');
     div.className = 'param-row';
-    const track = document.createElement('div'); track.className = 'thresh-track';
-    const rail = document.createElement('div'); rail.className = 'thresh-rail'; track.appendChild(rail);
-    row.threshSpan = document.createElement('div'); row.threshSpan.className = 'thresh-span'; track.appendChild(row.threshSpan);
-    track.appendChild(row.thLoInput); track.appendChild(row.thHiInput);
-    makeDualSliderTouch(track, row.thLoInput, row.thHiInput);
-    refreshThreshReadout(row);
-    div.append(row.nameCell, row.valueInput, row.valueReadout, track, row.threshReadout);
-
-    const wrap = document.createElement('div'); wrap.className = 'curve-wrap';
-    const head = document.createElement('div'); head.className = 'curve-head';
-    const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'curve-toggle'; toggle.textContent = '▸ curve';
-    head.appendChild(toggle); wrap.appendChild(head);
-    const body = document.createElement('div'); body.className = 'curve-body collapsed';
-    body.appendChild(row.curveEditor.el);
-    const reset = document.createElement('button'); reset.type = 'button'; reset.className = 'ghostbtn curve-reset'; reset.textContent = '⟲ linear';
-    reset.title = 'back to a straight line (the unit forgets this curve)';
-    reset.addEventListener('click', () => row.curveEditor.reset());
-    body.appendChild(reset); wrap.appendChild(body);
-    row.curveWrap = wrap; row.curveBody = body; row.curveToggle = toggle;
-    toggle.addEventListener('click', () => {
-      const open = body.classList.contains('collapsed');
-      row.curveUserOpen = open;
-      body.classList.toggle('collapsed', !open);
-      toggle.textContent = (open ? '▾' : '▸') + ' curve';
+    row.axisTag = document.createElement('span'); row.axisTag.className = 'axis-tag';
+    row.nameCell.appendChild(row.axisTag);
+    /* the LED is the map toggle: lit = a zone drives this parameter. Tap a
+       lit one to unmap it; tap a dark one and pick the strip it goes on. */
+    const led = row.nameCell.querySelector('.live-dot');
+    led.title = 'tap to map / unmap this parameter to the pedal';
+    led.addEventListener('click', e => {
+      e.stopPropagation();
+      if (!activePreset || !connected()) return;
+      if (paramSensorMapped(row.eff, row.par)) { if (hooks.onUnmap) hooks.onUnmap(row.eff, row.par); }
+      else openMapMenu(led, row);
     });
-    div.appendChild(wrap);
+    div.append(row.nameCell, row.valueInput, row.valueReadout);
+    row.el = div;
+    /* a tap on the row (not its slider) picks the parameter: the strip that
+       drives it selects that zone and reads in its units */
+    div.addEventListener('click', e => {
+      if (e.target.closest('input, button')) return;
+      pickParam(row.eff, row.par, true);
+    });
     return div;
   }
+  function pickParam(eff, par, fromRow) {
+    selectedParam = eff == null ? null : eff + ',' + par;
+    for (const row of rows) row.el.classList.toggle('on', selectedParam === row.eff + ',' + row.par);
+    if (fromRow && hooks.onParamPick) hooks.onParamPick(eff, par);
+  }
+  /* small context menu by the LED: which strip should drive this parameter */
+  let mapMenu = null;
+  function openMapMenu(led, row) {
+    closeMapMenu();
+    mapMenu = document.createElement('div');
+    mapMenu.className = 'mapmenu ambient amb-surface amb-chamfer amb-elevation-3 amb-mat-blasted amb-rounded-lg';
+    mapMenu.innerHTML = `<span class="mm-title">map ${esc(row.def.name)} to</span>
+      <button class="ghostbtn" type="button" data-axis="pitch">PITCH</button>
+      <button class="ghostbtn" type="button" data-axis="yaw">YAW</button>`;
+    mapMenu.querySelectorAll('button').forEach(b => b.addEventListener('click', e => {
+      e.stopPropagation();
+      const axis = b.dataset.axis; closeMapMenu();
+      if (hooks.onAddZone) hooks.onAddZone(axis, row.eff, row.par);
+    }));
+    document.body.appendChild(mapMenu);
+    const r = led.getBoundingClientRect(), w = mapMenu.offsetWidth, h = mapMenu.offsetHeight;
+    mapMenu.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left - 6)) + 'px';
+    mapMenu.style.top = Math.max(8, Math.min(window.innerHeight - h - 8, r.bottom + 8)) + 'px';
+    setTimeout(() => document.addEventListener('pointerdown', onDocDown, { once: true }), 0);
+  }
+  function onDocDown(e) { if (mapMenu && !mapMenu.contains(e.target)) closeMapMenu(); }
+  function closeMapMenu() { if (mapMenu) { mapMenu.remove(); mapMenu = null; } document.removeEventListener('pointerdown', onDocDown); }
   function refreshValueReadout(row) { row.valueReadout.textContent = FX.formatValue(row.def, parseFloat(row.valueInput.value)); }
   function refreshThreshReadout(row) {
     const lo = parseFloat(row.thLoInput.value), hi = parseFloat(row.thHiInput.value);
@@ -306,10 +316,6 @@
     if (p.length < 4) return;
     axisRaw01[0] = G.bytesToU16(p, 0) / 16383; axisRaw01[1] = G.bytesToU16(p, 2) / 16383;
     axisRawAtMs = performance.now();
-    for (const row of rows) if (!row.curveBody.classList.contains('collapsed') && paramSensorMapped(row.eff, row.par)) {
-      const a = onAxis(row.eff, row.par);
-      row.curveEditor.setLive(a < 0 ? -1 : axisRaw01[a]);
-    }
     if (activePreset) renderScreens();
   }
   setInterval(() => {
@@ -343,6 +349,7 @@
     if (activePreset && activePreset.letter === m.letter && activePreset.digit === m.digit) {
       activePreset.parMasksPitch = m.parMasksPitch; activePreset.parMasksYaw = m.parMasksYaw;
       renderActivePreset();
+      if (performance.now() < syncUntil) scheduleDecompile();
     }
     if (!listInProgress) bankChanged();
   }
@@ -356,6 +363,10 @@
     activeSlot = { letter: p[0], digit: p[1] };
     const info = presetCache.get(slotKey(p[0], p[1]));
     if (info) setActivePreset(info); else { activePreset = null; clearActivePreset(); }
+    /* the unit pushes this Setup's sweep ranges and values over the next
+       second or so; every one of those re-derives the zones */
+    syncUntil = performance.now() + 2500;
+    scheduleDecompile();
     bankChanged();
     if (hooks.onLoaded) hooks.onLoaded(G.slotLabel(p[0], p[1]), info ? info.name : '');
     log('rx', `LOADED ${G.slotLabel(p[0], p[1])}`);
@@ -371,25 +382,23 @@
   }
 
   /* ---- active Setup ------------------------------------------------ */
+  /* which strip drives (eff, par): what the zones compiled to, so the LED
+     follows the editor even when the unit is holding an emptied axis's
+     last parameter */
   const onAxis = (eff, par) => {
-    const p = activePreset; if (!p) return -1;
-    if (((p.axisEffectsPitch >> eff) & 1) && (((p.parMasksPitch[eff] || 0) >> par) & 1)) return 0;
-    if (((p.axisEffectsYaw >> eff) & 1) && (((p.parMasksYaw[eff] || 0) >> par) & 1)) return 1;
+    if (!activePreset) return -1;
+    const k = eff + ',' + par;
+    if (lastApplied[0].has(k)) return 0;
+    if (lastApplied[1].has(k)) return 1;
     return -1;
   };
   const paramSensorMapped = (eff, par) => onAxis(eff, par) >= 0;
-  function refreshCurveVisibility(resetOverrides) {
-    const p = activePreset, any = p ? (p.axisEffectsPitch | p.axisEffectsYaw) : 0;
+  function refreshCurveVisibility() {
     for (const row of rows) {
-      if (resetOverrides) row.curveUserOpen = null;
-      const assigned = p ? ((any >> row.eff) & 1) !== 0 : false;
-      row.curveWrap.hidden = !!p && !assigned;
-      const auto = paramSensorMapped(row.eff, row.par);
-      const open = row.curveUserOpen !== null ? row.curveUserOpen : auto;
-      row.curveBody.classList.toggle('collapsed', !open);
-      row.curveToggle.textContent = (open ? '▾' : '▸') + ' curve';
-      row.nameCell.classList.toggle('mapped', auto);
-      if (!open || !auto) row.curveEditor.setLive(-1);
+      const a = onAxis(row.eff, row.par);
+      row.nameCell.classList.toggle('mapped', a >= 0);
+      row.axisTag.textContent = a < 0 ? '' : (a === 0 ? 'PITCH' : 'YAW');
+      row.nameCell.querySelector('.live-dot').title = a >= 0 ? 'driven by the pedal — tap to unmap' : 'tap to map this parameter to the pedal';
     }
   }
   function setActivePreset(info) { activePreset = info; editorDirty = false; renderActivePreset(); refreshCurveVisibility(true); }
@@ -404,6 +413,7 @@
     ui.dirty.classList.toggle('clean', !editorDirty);
     ui.save.classList.toggle('on', editorDirty);
     renderScreens();
+    if (hooks.onDirty) hooks.onDirty(editorDirty);
   }
   function renderActivePreset() {
     const p = activePreset;
@@ -415,7 +425,6 @@
     if (ui.name.value !== p.name) ui.name.value = p.name;
     const on = connected();
     ui.name.disabled = !on; ui.save.disabled = !on; ui.discard.disabled = !on; ui.delete.disabled = !on;
-    renderAxisChain(0); renderAxisChain(1);
     renderChainList(); updateParamGridVisibility(); refreshCurveVisibility();
     updateDirtyPill();
   }
@@ -536,6 +545,111 @@
     p.chain = next;
   }
 
+  /* ---- zones ⇄ frames --------------------------------------------------
+     Stage 2: the axis strips are the editor. orbit.js compiles an axis's
+     Controller zones into one entry per (effect, parameter): the sweep range
+     in the parameter's units and a 33-point curve over the whole travel.
+     applyAxis() turns that into SET_ASSIGN / SET_THRESH / SET_CURVE frames,
+     sending only what changed since the last apply. decompile() goes the
+     other way from the unit's state after a Setup loads. */
+  /* lastApplied is declared with the other state at the top */
+  let syncUntil = 0, decompileTimer = null;
+  const paramDef = (eff, par) => ((EFFECTS[eff] || {}).params || [])[par] || null;
+  const sameLut = (a, b) => a && b && a.length === b.length && a.every((v, i) => v === b[i]);
+
+  /* list: [{ eff, par, lo, hi, lut: number[33] }] in draw order (topmost last) */
+  function applyAxis(axisIdx, list) {
+    if (!connected() || !activePreset) return;
+    const prev = lastApplied[axisIdx], next = new Map();
+    for (const a of list) next.set(a.eff + ',' + a.par, a);
+    const keys = [...next.keys()], prevKeys = [...prev.keys()];
+    let changed = false;
+    if (!keys.length && prevKeys.length) log('info', `${axisIdx ? 'YAW' : 'PITCH'} has no zone left — the unit keeps its last parameter there until you add one`);
+    if (keys.length && (keys.length !== prevKeys.length || keys.some(k => !prev.has(k)))) {
+      /* the assignment set changed: REPLACE with the first, ADD the rest
+         (that also drops whatever left — no REMOVE frames needed) */
+      list.forEach((a, i) => { tx(G.frames.setAssign(axisIdx, a.eff, a.par, i ? 1 : 0)); localApplyAssign(axisIdx, a.eff, a.par, i > 0); });
+      log('tx', `assign ${axisIdx ? 'YAW' : 'PITCH'} → ${list.map(a => `${G.EFFECT_NAMES[a.eff]}·${(paramDef(a.eff, a.par) || {}).name}`).join(', ')}`);
+      changed = true;
+    }
+    for (const a of list) {
+      const k = a.eff + ',' + a.par, was = prev.get(k), row = rowIndex.get((a.eff << 8) | a.par);
+      if (!was || was.lo !== a.lo || was.hi !== a.hi) {
+        tx(G.frames.setThresh(a.eff, a.par, a.lo, a.hi));
+        if (row) { row.thLoInput.value = a.lo; row.thHiInput.value = a.hi; refreshThreshReadout(row); }
+        changed = true;
+      }
+      if (!was || !sameLut(was.lut, a.lut)) {
+        tx(G.frames.setCurve(a.eff, a.par, new Uint8Array(a.lut)));
+        if (row) row.curveEditor.setFromLut(new Uint8Array(a.lut));
+        changed = true;
+      }
+    }
+    lastApplied[axisIdx] = next;
+    refreshCurveVisibility();
+    if (changed) { markEditorDirty(); renderScreens(); }
+  }
+
+  function scheduleDecompile() {
+    clearTimeout(decompileTimer);
+    decompileTimer = setTimeout(decompile, 150);
+  }
+  /* Douglas–Peucker on a uniformly spaced table: indices kept, ≤ maxPts */
+  function simplify(ys, i0, i1, tol, maxPts) {
+    const run = t => {
+      const keep = new Set([i0, i1]);
+      const rec = (a, b) => {
+        if (b - a < 2) return;
+        let far = -1, dmax = 0;
+        for (let i = a + 1; i < b; i++) {
+          const yl = ys[a] + (ys[b] - ys[a]) * (i - a) / (b - a);
+          const d = Math.abs(ys[i] - yl);
+          if (d > dmax) { dmax = d; far = i; }
+        }
+        if (dmax > t) { keep.add(far); rec(a, far); rec(far, b); }
+      };
+      rec(i0, i1);
+      return [...keep].sort((x, y) => x - y);
+    };
+    let t = tol, pts = run(t);
+    while (pts.length > maxPts) { t *= 1.5; pts = run(t); }
+    return pts;
+  }
+  /* the unit's assignments → zones: [{ eff, par, lo, hi, points: [{x, y01}] }] per axis */
+  function decompile() {
+    if (!activePreset) return;
+    const out = [[], []];
+    for (let a = 0; a < 2; a++) {
+      const mask = a === 0 ? activePreset.axisEffectsPitch : activePreset.axisEffectsYaw;
+      const masks = a === 0 ? activePreset.parMasksPitch : activePreset.parMasksYaw;
+      const applied = new Map();
+      for (let e = 0; e < EFFECTS.length; e++) {
+        if (!(mask & (1 << e))) continue;
+        const pm = masks[e] || 1;
+        for (let q = 0; q < 8; q++) {
+          if (!(pm & (1 << q))) continue;
+          const row = rowIndex.get((e << 8) | q), def = paramDef(e, q);
+          if (!row || !def) continue;
+          const lut = Array.from(row.curveEditor.lut());
+          const thLo = parseFloat(row.thLoInput.value), thHi = parseFloat(row.thHiInput.value);
+          const range = def.max - def.min || 1;
+          const y01 = lut.map(v => ((thLo + (thHi - thLo) * v / 255) - def.min) / range);
+          /* the zone spans where the table moves; flat ends are the hold outside it */
+          let i0 = 0, i1 = lut.length - 1;
+          while (i0 < i1 && lut[i0 + 1] === lut[i0]) i0++;
+          while (i1 > i0 && lut[i1 - 1] === lut[i1]) i1--;
+          if (i1 - i0 < 1) { i0 = 0; i1 = lut.length - 1; }
+          const idx = simplify(y01, i0, i1, 1.5 / 255, 8);
+          out[a].push({ eff: e, par: q, lo: i0 / (lut.length - 1), hi: i1 / (lut.length - 1), points: idx.map(i => ({ x: i / (lut.length - 1), y: y01[i] })) });
+          applied.set(e + ',' + q, { lo: thLo, hi: thHi, lut });
+        }
+      }
+      lastApplied[a] = applied;
+    }
+    refreshCurveVisibility();
+    if (hooks.onSetupZones) hooks.onSetupZones(out);
+  }
+
   /* ---- screens ----------------------------------------------------- */
   const ARC_START = 225, ARC_SWEEP = 270, ARC_R = 102, CTR = 120;
   function arcPath(cx, cy, r, start, sweep) {
@@ -595,6 +709,7 @@
       if (f.payload.length >= 10) {
         const row = rowIndex.get((f.payload[0] << 8) | f.payload[1]);
         if (row) { row.thLoInput.value = G.bytesToF32(f.payload, 2); row.thHiInput.value = G.bytesToF32(f.payload, 6); refreshThreshReadout(row); renderScreens(); }
+        if (performance.now() < syncUntil) scheduleDecompile();
       }
       return;
     }
@@ -607,6 +722,7 @@
     }
     if (f.cmd === CMD.SET_CURVE) {
       if (f.payload.length >= 3) { const row = rowIndex.get((f.payload[0] << 8) | f.payload[1]); if (row) row.curveEditor.setFromLut(f.payload.subarray(2)); }
+      if (performance.now() < syncUntil) scheduleDecompile();
       log('rx', `CURVE sync (eff ${f.payload[0]} par ${f.payload[1]})`);
       return;
     }
@@ -614,6 +730,7 @@
   }
   const linkEvents = {
     onConnect: () => {
+      lastApplied = [new Map(), new Map()];
       setStatus('connected', 'ok');
       setConnectedUi(true);
       log('info', `link up · ${window.GCLink.LINK_LABELS[linkKind]}`);
@@ -748,7 +865,6 @@
       connect: $('gc-connect'), disconnect: $('gc-disconnect'), refresh: $('gc-refresh'), ping: $('gc-ping'),
       active: $('gc-active'), dirty: $('gc-dirty'), swatch: $('gc-swatch'), slot: $('gc-slot'), name: $('gc-name'),
       save: $('gc-save'), discard: $('gc-discard'), delete: $('gc-delete'),
-      chains: [$('gc-chain-0'), $('gc-chain-1')],
       paramGrid: $('gc-param-grid'), paramsNote: $('gc-params-note'), chainList: $('gc-chain-list'),
       screenPitch: $('gc-screen-pitch'), screenYaw: $('gc-screen-yaw'),
       fwFile: $('gc-fw-file'), fwUpdate: $('gc-fw-update'), fwStatus: $('gc-fw-status'), fwWrap: $('gc-fw-wrap'), fwBar: $('gc-fw-bar'), fwHint: $('gc-fw-hint'),
@@ -772,17 +888,6 @@
       if (!confirm(`Delete Setup ${idOf(activePreset)}${activePreset.name ? ' "' + activePreset.name + '"' : ''} from the unit? This cannot be undone.`)) return;
       remove(activePreset.letter, activePreset.digit);
     });
-    for (const a of [0, 1]) {
-      const root = ui.chains[a], addSel = root.querySelector('.add-row .eff-sel'), parSel = root.querySelector('.add-row .par-sel');
-      addSel.addEventListener('change', () => fillParams(parSel, +addSel.value, defaultParamIdxForEffect(+addSel.value)));
-      root.querySelector('.add-btn').addEventListener('click', () => { sendAssign(a, +addSel.value, +parSel.value || 0, true); markEditorDirty(); });
-    }
-    /* demo pedal: the sliders move the same positions the MIDI / Analog tabs use */
-    for (const lab of mount.querySelectorAll('.pedal')) {
-      const input = lab.querySelector('input'), key = lab.dataset.pedal;
-      input.addEventListener('input', () => { if (hooks.setAxes) hooks.setAxes(key, +input.value); });
-      lab.hidden = true;
-    }
     renderParamGrid();
     initFirmware();
     setLinkKind(hooks.linkKind || availableKinds()[0]);
@@ -791,16 +896,13 @@
     /* the simulated unit is always there: connect to it without a click */
     if (linkKind === 'sim' && hooks.autoConnect) setTimeout(connect, 50);
   }
-  function syncPedals() {
-    if (!hooks.getAxes) return;
-    const ax = hooks.getAxes();
-    for (const lab of ui.mount.querySelectorAll('.pedal')) lab.querySelector('input').value = ax[lab.dataset.pedal];
-  }
 
   window.GCTab = {
     init, setLinkKind, linkKind: () => linkKind, connect, disconnect, isConnected: connected,
     bank, active: () => activePreset, activeId: () => (activeSlot ? G.slotLabel(activeSlot.letter, activeSlot.digit) : null),
-    load, rename, renameSlot, save, saveNew, remove, refreshBank, nameOf, describe, idOf, parseId, log, syncPedals,
+    load, rename, renameSlot, save, saveNew, remove, refreshBank, nameOf, describe, idOf, parseId, log,
     simulator: () => sim, listing: () => listInProgress,
+    applyAxis, decompile, dirty: () => editorDirty, paramDef,
+    pickParam: (eff, par) => pickParam(eff, par, false),
   };
 })();
