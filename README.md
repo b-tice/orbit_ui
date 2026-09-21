@@ -171,8 +171,25 @@ with the MIDI and Analog Out Setups on the same program change when a unit
 is connected. The header SETUP field shows the loaded Setup's name and
 renames it. Names on the unit keep their case (10 characters).
 
+**Backup and restore.** With a Ground Control connected, **export file**
+first reads every Setup off the unit (name, colour, chain, each axis's
+assignments with their sweep ranges and curves, and the stored value of
+every parameter) and writes them into the file under `groundControl`,
+next to the MIDI and Analog Out libraries. **import file** then offers to
+write those Setups back to whatever unit is connected, slot by slot,
+through the ordinary edit commands and a save per slot, and reloads the
+Setup you had open. Unsaved edits are not part of a backup — save first.
+Curves are per parameter on the unit, so two restored Setups that drive
+the same parameter end up sharing the last one's curve.
+
 The wire vocabulary is unchanged (`LIST_PRESETS`, `LOAD_PRESET`, …); only
-the words on screen say Setup.
+the words on screen say Setup. Two commands are new and exist only in the
+simulator so far — they are the spec for the firmware:
+
+| Command | Payload | Replies |
+|---|---|---|
+| `GET_PRESET_DUMP` 0x19 | `[L][D]` | `PRESET_INFO`, `PRESET_MASKS`, one `PRESET_VALUES` 0x94 per effect `[L][D][eff][n][f32 × n]`, one `PRESET_THRESH` 0x95 per assigned parameter `[L][D][axis][eff][par][lo f32][hi f32]`, a `PRESET_CURVE` 0x97 `[L][D][eff][par][33 × u8]` where a table is stored, then `PRESET_DUMP_END` 0x96 `[L][D]` |
+| `SET_PRESET_COLOR` 0x1a | `[L][D][colorIdx]` | `PRESET_INFO`, `PRESET_MASKS` |
 
 ## Interactions
 

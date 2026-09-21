@@ -8,8 +8,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Michroma&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="ambient.css">
-<link rel="stylesheet" href="orbit.css">
-<link rel="stylesheet" href="gc.css">
+<link rel="stylesheet" href="orbit.css?v=1.19">
+<link rel="stylesheet" href="gc.css?v=1.19">
 </head>
 <body class="ambient amb-surface">
 
@@ -86,8 +86,8 @@
     <span class="pol-switch"></span>
   </label>
   <span class="foot-tools">
-    <button class="ghostbtn" id="exportBtn" type="button" title="save both libraries, the set list and the receive channel to a .json file">export file</button>
-    <button class="ghostbtn" id="importBtn" type="button" title="restore libraries and set list from a .json file made by export">import file</button>
+    <button class="ghostbtn" id="exportBtn" type="button" title="save both libraries, every Set List, the receive channel — and, with a Ground Control connected, a full backup of its Setups — to a .json file">export file</button>
+    <button class="ghostbtn" id="importBtn" type="button" title="restore libraries and Set Lists from a .json file made by export; its Ground Control Setups are written to the connected unit">import file</button>
     <input id="importFile" type="file" accept="application/json,.json" hidden>
     <button class="ghostbtn" id="resetBtn" type="button">reset demo</button>
   </span>
@@ -135,13 +135,13 @@
   </div>
 </div>
 
-<script src="gc/protocol.js"></script>
-<script src="gc/effects.js"></script>
-<script src="gc/curve.js"></script>
-<script src="gc/factory.js"></script>
-<script src="gc/sim.js"></script>
-<script src="link.js"></script>
-<script src="gc/tab.js"></script>
-<script src="orbit.js"></script>
+<script src="gc/protocol.js?v=1.19"></script>
+<script src="gc/effects.js?v=1.19"></script>
+<script src="gc/curve.js?v=1.19"></script>
+<script src="gc/factory.js?v=1.19"></script>
+<script src="gc/sim.js?v=1.19"></script>
+<script src="link.js?v=1.19"></script>
+<script src="gc/tab.js?v=1.19"></script>
+<script src="orbit.js?v=1.19"></script>
 </body>
 </html>

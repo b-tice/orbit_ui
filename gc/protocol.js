@@ -17,11 +17,19 @@
     LIST_PRESETS: 0x10, GET_PRESET: 0x11, LOAD_PRESET: 0x12, SAVE_PRESET: 0x13,
     DELETE_PRESET: 0x14, SET_PRESET_NAME: 0x15, REMOVE_ASSIGN: 0x16, REMOVE_PARAM: 0x17,
     DSP_DFU: 0x18,
+    /* proposed for the firmware (implemented by the simulator): a full slot
+       read for backups, and a colour write */
+    GET_PRESET_DUMP: 0x19,     /* [L][D] → PRESET_INFO, PRESET_MASKS, PRESET_VALUES…, PRESET_THRESH…, PRESET_CURVE…, PRESET_DUMP_END */
+    SET_PRESET_COLOR: 0x1a,    /* [L][D][colorIdx] → PRESET_INFO, PRESET_MASKS */
   };
   const REPLY = {
     PONG: 0x81, LIVE_VAL: 0x82, ASSIGN_STATE: 0x83, MODE: 0x84, ENCODER_VAL: 0x85,
     MARKER_HIT: 0x86, AXIS_RAW: 0x87,
     PRESET_INFO: 0x90, LIST_END: 0x91, LOADED: 0x92, PRESET_MASKS: 0x93,
+    PRESET_VALUES: 0x94,       /* [L][D][eff][n][f32 × n]  — the slot's stored value of every parameter of one effect */
+    PRESET_THRESH: 0x95,       /* [L][D][axis][eff][par][lo f32][hi f32] — one assigned parameter's sweep */
+    PRESET_DUMP_END: 0x96,     /* [L][D] */
+    PRESET_CURVE: 0x97,        /* [L][D][eff][par][33 × u8] — the response table an assigned parameter uses */
   };
   const nameOf = (table, v) => { for (const k in table) if (table[k] === v) return k; return null; };
   const frameName = cmd => nameOf(REPLY, cmd) || nameOf(CMD, cmd) || ('0x' + cmd.toString(16).padStart(2, '0'));
@@ -125,6 +133,13 @@
     removeAssign: (axis, eff) => encodeFrame(CMD.REMOVE_ASSIGN, b(axis, eff)),
     removeParam: (axis, eff, par) => encodeFrame(CMD.REMOVE_PARAM, b(axis, eff, par)),
     dspDfu: () => encodeFrame(CMD.DSP_DFU),
+    getPresetDump: (L, D) => encodeFrame(CMD.GET_PRESET_DUMP, b(L, D)),
+    setPresetColor: (L, D, c) => encodeFrame(CMD.SET_PRESET_COLOR, b(L, D, c)),
+    /* replies, for the simulator */
+    presetValues: (L, D, eff, vals) => encodeFrame(REPLY.PRESET_VALUES, cat(b(L, D, eff, vals.length), ...vals.map(f32ToBytes))),
+    presetThresh: (L, D, axis, eff, par, lo, hi) => encodeFrame(REPLY.PRESET_THRESH, cat(b(L, D, axis, eff, par), f32ToBytes(lo), f32ToBytes(hi))),
+    presetCurve: (L, D, eff, par, lut) => encodeFrame(REPLY.PRESET_CURVE, cat(b(L, D, eff, par), new Uint8Array(lut))),
+    presetDumpEnd: (L, D) => encodeFrame(REPLY.PRESET_DUMP_END, b(L, D)),
   };
 
   /* ---- replies ------------------------------------------------------- */

@@ -695,6 +695,105 @@
     if (hooks.onSetupZones) hooks.onSetupZones(out);
   }
 
+  /* ---- backup / restore of the unit's bank ------------------------------
+     dumpBank() reads every slot with GET_PRESET_DUMP into plain objects for
+     the export file; restoreBank() writes such objects back through the
+     ordinary edit commands and saves each slot. Both walk the bank one slot
+     at a time, paced for the wire. */
+  let dumpPending = null;   /* { key, slot, resolve, timer } while one slot is being read */
+  function handleDumpFrame(f) {
+    const p = f.payload, d = dumpPending;
+    if (!d || p.length < 2 || slotKey(p[0], p[1]) !== d.key) return;
+    if (f.cmd === R.PRESET_VALUES) {
+      const eff = p[2], n = p[3];
+      for (let i = 0; i < n && 4 + 4 * i + 4 <= p.length; i++) d.slot.values[eff + ',' + i] = +G.bytesToF32(p, 4 + 4 * i).toFixed(6);
+    } else if (f.cmd === R.PRESET_THRESH) {
+      if (p.length < 13) return;
+      const list = p[2] === 0 ? d.slot.pitch : d.slot.yaw;
+      const eff = p[3], par = p[4], lo = +G.bytesToF32(p, 5).toFixed(6), hi = +G.bytesToF32(p, 9).toFixed(6);
+      const e = list.find(x => x.eff === eff && x.par === par);
+      if (e) { e.lo = lo; e.hi = hi; } else list.push({ eff, par, lo, hi, lut: null });
+    } else if (f.cmd === R.PRESET_CURVE) {
+      if (p.length < 5) return;
+      const lut = Array.from(p.subarray(4));
+      for (const list of [d.slot.pitch, d.slot.yaw]) for (const e of list) if (e.eff === p[2] && e.par === p[3]) e.lut = lut;
+    } else if (f.cmd === R.PRESET_DUMP_END) {
+      clearTimeout(d.timer); dumpPending = null; d.resolve(d.slot);
+    }
+  }
+  const pace = () => (linkKind === 'sim' ? 2 : 15);
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  function dumpSlot(info) {
+    return new Promise(resolve => {
+      const slot = {
+        slot: idOf(info), name: info.name, color: info.colorIdx, chain: info.chain.slice(),
+        pitch: [], yaw: [], values: {},
+      };
+      /* the assignments come from the bank listing; the dump fills in ranges, curves and values */
+      const masks = [info.parMasksPitch, info.parMasksYaw], effs = [info.axisEffectsPitch, info.axisEffectsYaw];
+      for (let a = 0; a < 2; a++) for (let e = 0; e < MAX_E; e++) {
+        if (!(effs[a] & (1 << e))) continue;
+        const pm = masks[a][e] || 1;
+        for (let q = 0; q < 8; q++) if (pm & (1 << q)) (a === 0 ? slot.pitch : slot.yaw).push({ eff: e, par: q, lo: null, hi: null, lut: null });
+      }
+      dumpPending = { key: slotKey(info.letter, info.digit), slot, resolve, timer: setTimeout(() => { dumpPending = null; slot.incomplete = true; resolve(slot); }, 1500) };
+      tx(G.frames.getPresetDump(info.letter, info.digit));
+    });
+  }
+  async function dumpBank(onProgress) {
+    if (!connected()) return null;
+    const list = bank();
+    const out = [];
+    for (let i = 0; i < list.length; i++) {
+      if (onProgress) onProgress(i, list.length);
+      const slot = await dumpSlot(list[i]);
+      if (slot.incomplete && i === 0) {
+        /* no answer to GET_PRESET_DUMP: this unit's firmware predates it */
+        log('err', 'the unit does not answer GET_PRESET_DUMP — its Setups are not in the export');
+        return null;
+      }
+      out.push(slot);
+      await wait(pace() * 4);
+    }
+    if (onProgress) onProgress(list.length, list.length);
+    log('info', `backed up ${out.length} Setups from the unit`);
+    return out;
+  }
+  async function restoreBank(setups, onProgress) {
+    if (!connected()) return 0;
+    const send = async frame => { tx(frame); await wait(pace()); };
+    const before = activeSlot ? { ...activeSlot } : null;
+    let n = 0;
+    for (const s of setups) {
+      const id = parseId(s.slot);
+      if (!id) continue;
+      if (onProgress) onProgress(n, setups.length, s.slot);
+      /* start from the slot if it exists, so untouched fields keep their values */
+      if (presetCache.has(slotKey(id.L, id.D))) { await send(G.frames.loadPreset(id.L, id.D)); await wait(pace() * 20); }
+      for (const [a, list] of [[0, s.pitch || []], [1, s.yaw || []]]) {
+        for (let i = 0; i < list.length; i++) await send(G.frames.setAssign(a, list[i].eff, list[i].par, i ? 1 : 0));
+        for (const e of list) {
+          if (e.lo != null && e.hi != null) await send(G.frames.setThresh(e.eff, e.par, e.lo, e.hi));
+          await send(G.frames.setCurve(e.eff, e.par, new Uint8Array(e.lut && e.lut.length === C.LUT_N ? e.lut : IDENTITY)));
+        }
+      }
+      for (const k of Object.keys(s.values || {})) { const [e, q] = k.split(',').map(Number); if (paramDef(e, q)) await send(G.frames.setParam(e, q, s.values[k])); }
+      if (s.chain && s.chain.length) await send(G.frames.setChainOrder(s.chain.filter(e => e < MAX_E)));
+      await send(G.frames.savePreset(id.L, id.D)); await wait(pace() * 10);
+      await send(G.frames.setPresetName(id.L, id.D, s.name || ''));
+      if (s.color != null) await send(G.frames.setPresetColor(id.L, id.D, s.color & 7));
+      await wait(pace() * 10);
+      n++;
+    }
+    if (onProgress) onProgress(n, setups.length, '');
+    log('info', `restored ${n} Setups to the unit`);
+    /* the writes went through the working state: put back what was loaded */
+    refreshBank();
+    await wait(pace() * 20 + 300 * (setups.length ? 1 : 0));
+    if (before) load(before.letter, before.digit);
+    return n;
+  }
+
   /* ---- screens ----------------------------------------------------- */
   const ARC_START = 225, ARC_SWEEP = 270, ARC_R = 102, CTR = 120;
   function arcPath(cx, cy, r, start, sweep) {
@@ -750,6 +849,7 @@
     if (f.cmd === R.PRESET_MASKS) { handlePresetMasks(f.payload); return; }
     if (f.cmd === R.LIST_END) { handleListEnd(); return; }
     if (f.cmd === R.LOADED) { handleLoaded(f.payload); return; }
+    if (f.cmd === R.PRESET_VALUES || f.cmd === R.PRESET_THRESH || f.cmd === R.PRESET_CURVE || f.cmd === R.PRESET_DUMP_END) { handleDumpFrame(f); return; }
     if (f.cmd === CMD.SET_THRESH) {
       if (f.payload.length >= 10) {
         const row = rowIndex.get((f.payload[0] << 8) | f.payload[1]);
@@ -949,6 +1049,7 @@
     load, rename, renameSlot, save, saveNew, remove, refreshBank, nameOf, describe, idOf, parseId, log,
     simulator: () => sim, listing: () => listInProgress,
     applyAxis, decompile, dirty: () => editorDirty, paramDef,
+    dumpBank, restoreBank, unitLabel: () => window.GCLink.LINK_LABELS[linkKind], setBankStatus,
     pickParam: (eff, par) => pickParam(eff, par, false),
   };
 })();

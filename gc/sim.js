@@ -352,6 +352,43 @@
           }
           break;
         }
+        case CMD.GET_PRESET_DUMP: {
+          if (p.length < 2) break;
+          const [L, D] = p, q = this.bank.get(key(L, D));
+          if (!q) break;
+          let d = 0;
+          this.sendPresetInfo(L, D, q, d += 4);
+          for (let e = 0; e < MAX_E; e++) {
+            const n = (EFFECTS[e] || { params: [] }).params.length;
+            if (!n) continue;
+            this.emit(G.frames.presetValues(L, D, e, q.paramVal[e].slice(0, n)), d += 4);
+          }
+          for (let a = 0; a < 2; a++) {
+            const s = a === 0 ? 1 : 0;
+            for (let e = 0; e < MAX_E; e++) {
+              if (!(q.axisEffects[a] & (1 << e))) continue;
+              const mask = q.axisEffectPar[a][e] || 1;
+              for (let par = 0; par < MAX_P; par++) {
+                if (!(mask & (1 << par))) continue;
+                this.emit(G.frames.presetThresh(L, D, a, e, par, q.threshLo[s][e][par], q.threshHi[s][e][par]), d += 4);
+                const lut = this.curves.get(e + ',' + par);
+                if (lut) this.emit(G.frames.presetCurve(L, D, e, par, lut), d += 4);
+              }
+            }
+          }
+          this.emit(G.frames.presetDumpEnd(L, D), d += 4);
+          break;
+        }
+        case CMD.SET_PRESET_COLOR: {
+          if (p.length < 3) break;
+          const q = this.bank.get(key(p[0], p[1]));
+          if (!q) break;
+          q.colorIdx = p[2] & 7;
+          if (this.loaded && this.loaded.L === p[0] && this.loaded.D === p[1]) this.loaded.color = q.colorIdx;
+          this.saveFlash();
+          this.sendPresetInfo(p[0], p[1], q);
+          break;
+        }
         case CMD.LOAD_PRESET: {
           if (p.length < 2) break;
           const [L, D] = p;

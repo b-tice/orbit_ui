@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.18';
+const APP_VERSION = '1.19';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -2029,16 +2029,31 @@ document.getElementById('resetBtn').addEventListener('click', () => guardUnsaved
 
 /* ── export / import: the whole librarian as one .json file ─────── */
 
-function exportFile() {
+async function exportFile() {
   const doc = {
     format: 'orbit-ui-library',
     version: APP_VERSION,
     exportedAt: new Date().toISOString(),
     receiveChannel: state.globalCh,
     library: state.library,      /* { midi: [files], analog: [files] } */
-    setlists: state.setlists,    /* [{ id, name, bank, slots: [{ midi: id, analog: id }] }] */
+    setlists: state.setlists,    /* [{ id, name, bank, slots: [{ midi: id, analog: id, gc: 'B3' }] }] */
     activeSetlist: state.activeSetlist,
   };
+  /* a connected Ground Control: back up its whole Setup bank into the file */
+  if (GCTab.isConnected()) {
+    const btn = document.getElementById('exportBtn');
+    btn.disabled = true;
+    const setups = await GCTab.dumpBank((i, n) => { btn.textContent = `backing up ${i}/${n}`; GCTab.setBankStatus(`backing up Setup ${i} of ${n}…`); });
+    btn.disabled = false; btn.textContent = 'export file';
+    GCTab.setBankStatus(setups ? `${setups.length} Setups on the unit · backed up` : 'this unit cannot be backed up (no GET_PRESET_DUMP) — file has the libraries only', setups ? 'ok' : 'err');
+    if (setups) {
+      doc.groundControl = {
+        unit: GCTab.unitLabel(), exportedAt: new Date().toISOString(),
+        effects: GCFX.EFFECTS.map(e => ({ id: e.id, name: e.name, params: e.params.map(p => p.name) })),   /* so the ids read */
+        setups,
+      };
+    }
+  }
   const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   const d = new Date();
@@ -2068,6 +2083,16 @@ function importFile(text) {
   if (slots().length) loadSlot(0); else refreshEditor();
   saveState();
   flashProgName();
+  /* the file's Ground Control Setups: write them to the connected unit */
+  const gcs = doc.groundControl && Array.isArray(doc.groundControl.setups) ? doc.groundControl.setups : null;
+  if (gcs && gcs.length) {
+    if (!GCTab.isConnected()) { alert(`The file also holds ${gcs.length} Ground Control Setups. Connect a Ground Control and import again to write them to it.`); return; }
+    if (!confirm(`Also write the file's ${gcs.length} Ground Control Setups (${gcs.map(s => s.slot).join(', ')}) to the connected unit? Those slots are overwritten.`)) return;
+    const btn = document.getElementById('importBtn');
+    btn.disabled = true;
+    GCTab.restoreBank(gcs, (i, n, slot) => { btn.textContent = `writing ${i}/${n}`; GCTab.setBankStatus(slot ? `writing Setup ${slot} (${i + 1} of ${n})…` : `${n} Setups written`, slot ? '' : 'ok'); })
+      .then(() => { btn.disabled = false; btn.textContent = 'import file'; if (isGC()) renderLibrarian(); });
+  }
 }
 
 document.getElementById('exportBtn').addEventListener('click', exportFile);
