@@ -143,7 +143,8 @@ other way: the unit's assignments, sweep ranges and tables become zones
 at most 8). The axis **save** buttons light while the unit's live state
 differs from the slot and send `SAVE_PRESET`; **discard** reloads the slot.
 
-The strips are half again as tall on this tab. Right under them sit
+The strips are half again as tall on this tab, and PITCH sits above YAW
+(the unit's own order). Right under them sit
 **Screens** (the unit's two round displays, following the ▲ markers) and
 the Library / Set List; below those: **Connection** (link: simulated / WiFi
 / USB, connect, refresh setups, ping), **Active Setup** (colour, slot,

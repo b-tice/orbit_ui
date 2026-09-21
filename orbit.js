@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.17';
+const APP_VERSION = '1.18';
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -638,7 +638,8 @@ const editors = {}; // key -> {svg, outEl}
 function buildPanels() {
   const main = document.getElementById('axes');
   main.innerHTML = '';
-  for (const key of ['yaw', 'pitch']) {
+  /* the Ground Control tab lists PITCH first, like the unit's own screens */
+  for (const key of (isGC() ? ['pitch', 'yaw'] : ['yaw', 'pitch'])) {
     const axis = state.axes[key];
     const panel = document.createElement('section');
     panel.className = 'axis-panel ambient amb-surface amb-chamfer amb-elevation-2 ambx-panel amb-mat-blasted amb-rounded-xl';
