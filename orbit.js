@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.20';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.21';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -210,6 +210,7 @@ function defaultState() {
     names: { midi: 'INIT', analog: 'INIT', gc: '' },   /* SETUP field, per output tab */
     loaded: { midi: null, analog: null, gc: null },     /* library file id per output tab (gc: the unit's slot id) */
     gcSim: false,                                /* show the GROUND CONTROL tab against a simulated unit */
+    vertPitch: false,                            /* test: the PITCH strip drawn upright */
     axes: {
       yaw: {
         key: 'yaw', label: 'YAW', sub: 'left → right',
@@ -344,6 +345,7 @@ function migrateLibrary(s) {
   for (const k of ['yaw', 'pitch']) if (s.axes[k] && s.axes[k].outputs && !s.axes[k].outputs.gc) s.axes[k].outputs.gc = { zones: [] };
   if (s.names.gc === undefined) s.names.gc = '';
   s.gcSim = !!s.gcSim;
+  s.vertPitch = !!s.vertPitch;
   for (const l of s.setlists) for (const sl of l.slots) if (sl.gc === undefined) sl.gc = null;
   if (!s.analogMirrored) {
     for (const sl of s.setlists.flatMap(l => l.slots)) {
@@ -716,19 +718,32 @@ function gcGutter(axis) {
   return Math.max(GEO.left, Math.ceil(wmax) + 14);
 }
 
+/* test mode: the PITCH strip drawn upright. The drawing is laid out as
+   usual (travel along x, value along y) and then turned as a whole:
+   (x, y) → (H − y, W − x), so heel is at the bottom, toe at the top and
+   the value runs left → right. Labels and chips are re-placed upright. */
+const isVert = axis => axis.key === 'pitch' && !!state.vertPitch;
+const VERT_TRAVEL = 400;   /* the strip's height when upright (travel length, before chips) */
+
 function axisGeom(axis) {
   const svg = editors[axis.key].svg;
-  const w = svg.clientWidth || svg.parentElement.clientWidth || 800;
-  const x0 = isGC() ? gcGutter(axis) : GEO.left, x1 = w - GEO.right;
+  const vert = isVert(axis);
+  const wide = svg.clientWidth || svg.parentElement.clientWidth || 800;
+  const x0 = isGC() ? gcGutter(axis) : GEO.left;
+  /* upright: travel is a fixed length; the value axis spans the panel */
+  const w = vert ? Math.round(VERT_TRAVEL * (isGC() ? 1.2 : 1)) + x0 + GEO.right : wide;
+  const x1 = w - GEO.right;
   const tx = t => x0 + t * (x1 - x0);
   /* chip rows decide how tall the header band is */
   const probe = chipLayout(axis, { tx });
-  const top = 12 + probe.rows * GEO.chipRow + 4 + (isGC() ? 10 : 0);   /* room for the parameter name over the value axis */
+  /* upright, the chip rows become columns up the right side, each as wide as the widest chip */
+  const chipCol = vert ? Math.max(...probe.chips.map(c => c.w), 0) + 8 : GEO.chipRow;
+  const top = 12 + probe.rows * chipCol + 4 + (isGC() ? 10 : 0);   /* room for the parameter name over the value axis */
   /* the Ground Control strips are half again as tall: the curve IS the sweep there */
-  const h = Math.round(GEO.height * (isGC() ? 1.5 : 1)) + (probe.rows - 1) * GEO.chipRow;
+  const h = vert ? wide : Math.round(GEO.height * (isGC() ? 1.5 : 1)) + (probe.rows - 1) * GEO.chipRow;
   const y0 = top, y1 = h - GEO.bottom;
   return {
-    w, h, x0, x1, y0, y1, tx,
+    w, h, x0, x1, y0, y1, tx, vert, chipCol,
     ty: v => y1 - (v / 127) * (y1 - y0),
     it: px => Math.max(0, Math.min(1, (px - x0) / (x1 - x0))),
     iv: py => Math.max(0, Math.min(127, (1 - (py - y0) / (y1 - y0)) * 127)),
@@ -760,17 +775,17 @@ function render(axis) {
     const y = g.ty(v);
     const lv = v === 63.5 ? 64 : v;
     parts.push(`<line x1="${g.x0}" y1="${y}" x2="${g.x1}" y2="${y}" stroke="var(--well-line)" stroke-dasharray="2 5"/>`);
-    parts.push(`<text x="${g.x0 - 8}" y="${y + 3}" font-size="9" text-anchor="end">${gridLabel(inv ? 127 - lv : lv)}</text>`);
+    parts.push(`<text x="${g.x0 - 8}" y="${y + 3}" font-size="9" text-anchor="end" data-lbl="val">${gridLabel(inv ? 127 - lv : lv)}</text>`);
   }
-  if (gz && gz.type === 'ctl') parts.push(`<text x="${g.x0 - 8}" y="${g.y0 - 9}" font-size="8" text-anchor="end" fill="${colorOf(gz).c}">${gcDef(gz).name.toUpperCase()}</text>`);
+  if (gz && gz.type === 'ctl') parts.push(`<text x="${g.x0 - 8}" y="${g.y0 - 9}" font-size="8" text-anchor="end" fill="${colorOf(gz).c}" data-lbl="pname">${gcDef(gz).name.toUpperCase()}</text>`);
   /* travel ticks */
   for (const t of [0, 0.25, 0.5, 0.75, 1]) {
     const x = g.tx(t);
     parts.push(`<line x1="${x}" y1="${g.y1}" x2="${x}" y2="${g.y1 + 4}" stroke="var(--well-line)"/>`);
-    parts.push(`<text x="${x}" y="${g.y1 + 15}" font-size="8" text-anchor="middle">${Math.round(t * 100)}</text>`);
+    parts.push(`<text x="${x}" y="${g.y1 + 15}" font-size="8" text-anchor="middle" data-lbl="tick">${Math.round(t * 100)}</text>`);
   }
-  parts.push(`<text x="${g.x0}" y="${g.h - 6}" font-size="9" letter-spacing="2">${axis.endLabels[0]}</text>`);
-  parts.push(`<text x="${g.x1}" y="${g.h - 6}" font-size="9" letter-spacing="2" text-anchor="end">${axis.endLabels[1]}</text>`);
+  parts.push(`<text x="${g.x0}" y="${g.h - 6}" font-size="9" letter-spacing="2" data-lbl="end0">${axis.endLabels[0]}</text>`);
+  parts.push(`<text x="${g.x1}" y="${g.h - 6}" font-size="9" letter-spacing="2" text-anchor="end" data-lbl="end1">${axis.endLabels[1]}</text>`);
 
   const samplePath = (z, lo, hi) => {
     const n = Math.max(2, Math.round((hi - lo) * 140));
@@ -814,7 +829,7 @@ function render(axis) {
       labelCx.push(cx);
       const cy = (g.y0 + g.y1) / 2 + stack * 14;
       const wide = (xb - xa) > 54;
-      parts.push(`<text x="${cx}" y="${cy}" font-size="8" text-anchor="middle" class="zone-label" fill="${dead ? 'var(--dead-edge)' : col.c}" pointer-events="none" transform="${wide ? '' : `rotate(-90 ${cx} ${cy})`}">${zoneShortLabel(axis, z)}</text>`);
+      parts.push(`<text x="${cx}" y="${cy}" font-size="8" text-anchor="middle" class="zone-label" fill="${dead ? 'var(--dead-edge)' : col.c}" pointer-events="none" data-lbl="zone" transform="${wide ? '' : `rotate(-90 ${cx} ${cy})`}">${zoneShortLabel(axis, z)}</text>`);
     }
   }
   /* edge handles, on top of every band */
@@ -853,7 +868,7 @@ function render(axis) {
     const y = 6 + c.row * GEO.chipRow;
     const warn = ccConflict(axis, c.z);   /* amber: shares CH+CC with an overlapping Controller */
     const selected = isSel(axis, c.z);
-    parts.push(`<g data-role="chip" data-id="${c.z.id}" style="cursor:pointer">${warn ? `<title>overlaps another Controller on the same channel and CC — the topmost one wins</title>` : ''}
+    parts.push(`<g data-role="chip" data-id="${c.z.id}" data-row="${c.row}" style="cursor:pointer">${warn ? `<title>overlaps another Controller on the same channel and CC — the topmost one wins</title>` : ''}
       <rect x="${c.cx - c.w / 2}" y="${y}" width="${c.w}" height="17" rx="8.5" fill="${warn ? 'var(--warn-fill)' : 'var(--chip-fill)'}" stroke="${selected ? 'var(--sim)' : (warn ? 'var(--warn)' : col.c)}" stroke-opacity="${selected || warn ? 1 : 0.7}" stroke-width="${selected ? 2 : 1}"${selected ? ` filter="url(#glow-sim-${axis.key})"` : ''}/>
       <circle cx="${c.cx - c.w / 2 + 9}" cy="${y + 8.5}" r="3" fill="${col.c}"/>
       <text x="${c.cx + 6}" y="${y + 12}" font-size="8" text-anchor="middle" class="chip-label">${c.label}</text>
@@ -876,10 +891,18 @@ function render(axis) {
   parts.push(`<path d="M${sx - 7} ${g.y1 + 20} L${sx + 7} ${g.y1 + 20} L${sx} ${g.y1 + 9} Z" fill="var(--sim)" filter="url(#glow-sim-${axis.key})" data-role="sim" style="cursor:ew-resize"/>`);
   parts.push(`<rect x="${sx - 16}" y="${g.y1 + 2}" width="32" height="${GEO.bottom - 4}" fill="transparent" data-role="sim" style="cursor:ew-resize"/>`);
 
-  ed.svg.setAttribute('viewBox', `0 0 ${g.w} ${g.h}`);
-  ed.svg.setAttribute('width', g.w);
-  ed.svg.setAttribute('height', g.h);
-  ed.svg.innerHTML = parts.join('');
+  if (g.vert) {
+    ed.svg.setAttribute('viewBox', `0 0 ${g.h} ${g.w}`);
+    ed.svg.setAttribute('width', g.h);
+    ed.svg.setAttribute('height', g.w);
+    ed.svg.innerHTML = `<g transform="matrix(0 -1 -1 0 ${g.h} ${g.w})">${parts.join('')}</g>`;
+    verticalize(ed.svg, g);
+  } else {
+    ed.svg.setAttribute('viewBox', `0 0 ${g.w} ${g.h}`);
+    ed.svg.setAttribute('width', g.w);
+    ed.svg.setAttribute('height', g.h);
+    ed.svg.innerHTML = parts.join('');
+  }
 
   /* output readout: every active output at the marker; Controllers the
      marker has left show what they are doing meanwhile (hold / reset) */
@@ -916,6 +939,49 @@ function render(axis) {
   }
   const text = outs.length ? outs.join(' · ') : (idle.length ? idle.join(' · ') : 'DEAD');
   ed.outEl.textContent = text + (analog && axis.outputs.analog.invert ? '  ⇅' : '');
+}
+
+/* after the upright turn, put every label and chip back on its feet at the
+   spot it maps to: the value labels along the bottom, travel ticks and end
+   labels down the left, chips up the right */
+function verticalize(svg, g) {
+  const grp = svg.firstElementChild;
+  const map = (x, y) => ({ x: g.h - y, y: g.w - x });
+  const move = el => { svg.appendChild(el); };   /* out of the turned group: plain coordinates again */
+  for (const t of [...grp.querySelectorAll('text[data-lbl]')]) {
+    const role = t.dataset.lbl, x = +t.getAttribute('x'), y = +t.getAttribute('y');
+    t.removeAttribute('transform');
+    if (role === 'val') {
+      const p = map(g.x0, y - 3);
+      t.setAttribute('x', p.x); t.setAttribute('y', p.y + 14); t.setAttribute('text-anchor', 'middle');
+    } else if (role === 'tick') {
+      const p = map(x, g.y1);
+      t.setAttribute('x', p.x - 7); t.setAttribute('y', p.y + 3); t.setAttribute('text-anchor', 'end');
+    } else if (role === 'end0' || role === 'end1') {
+      const p = map(role === 'end0' ? g.x0 : g.x1, g.h);
+      t.setAttribute('x', p.x + 10); t.setAttribute('y', p.y); t.setAttribute('text-anchor', role === 'end0' ? 'start' : 'end');
+      t.setAttribute('transform', `rotate(-90 ${p.x + 10} ${p.y})`);
+    } else if (role === 'pname') {
+      const p = map(g.x0, g.y0);
+      t.setAttribute('x', p.x); t.setAttribute('y', p.y + 27); t.setAttribute('text-anchor', 'end');
+    } else if (role === 'zone') {
+      const p = map(x, y);
+      t.setAttribute('x', p.x); t.setAttribute('y', p.y + 3); t.setAttribute('text-anchor', 'middle');
+    }
+    move(t);
+  }
+  for (const c of [...grp.querySelectorAll('g[data-role=chip]')]) {
+    const r = c.querySelector('rect'), dot = c.querySelector('circle'), tx = c.querySelector('text');
+    const w = +r.getAttribute('width'), cx = +r.getAttribute('x') + w / 2;
+    const cy = 12 + (+c.dataset.row) * g.chipCol + g.chipCol / 2;   /* its column, up the right side */
+    const p = map(cx, cy);
+    r.setAttribute('x', p.x - w / 2); r.setAttribute('y', p.y - 8.5);
+    dot.setAttribute('cx', p.x - w / 2 + 9); dot.setAttribute('cy', p.y);
+    tx.setAttribute('x', p.x + 6); tx.setAttribute('y', p.y + 3.5);
+    move(c);
+  }
+  /* resize cursors turn with the strip */
+  for (const el of grp.querySelectorAll('[style*="ew-resize"]')) el.style.cursor = 'ns-resize';
 }
 
 function commit(axis) {
@@ -1017,7 +1083,10 @@ function wireEditor(svg, axis) {
 
   const evPos = e => {
     const rect = svg.getBoundingClientRect();
-    return { px: e.clientX - rect.left, py: e.clientY - rect.top };
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    if (!isVert(axis)) return { px, py };
+    const g = axisGeom(axis);            /* undo the turn: (x'', y'') → (W − y'', H − x'') */
+    return { px: g.w - py, py: g.h - px };
   };
 
   svg.addEventListener('pointerdown', e => {
@@ -2118,6 +2187,14 @@ function updateOutTabs() {
     t.classList.toggle('on', t.dataset.tab === state.tab);
   });
 }
+const vertToggle = document.getElementById('vertToggle');
+vertToggle.checked = !!state.vertPitch;
+vertToggle.addEventListener('change', () => {
+  state.vertPitch = vertToggle.checked;
+  saveState();
+  closePopover();
+  render(state.axes.pitch);
+});
 const gcSimToggle = document.getElementById('gcSimToggle');
 gcSimToggle.checked = !!state.gcSim;
 gcSimToggle.addEventListener('change', () => {
