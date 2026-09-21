@@ -58,7 +58,7 @@
 .effect-head h4 { margin: 0; font-size: 10px; font-weight: 400; letter-spacing: .14em; color: var(--ink); }
 .effect-head .eff-id { font-family: var(--mono); font-size: 9px; color: var(--ink-dim); }
 .param-row {
-  display: grid; grid-template-columns: 7.5rem 1fr 5.4rem; gap: 10px; align-items: center;
+  display: grid; grid-template-columns: 7.5rem 1fr 5.4rem 6.6rem; gap: 10px; align-items: center;
   padding: 5px 0; border-top: 1px solid hsl(250 25% 14%); font-size: 10px;
 }
 .param-row:first-of-type { border-top: none; }
@@ -71,6 +71,16 @@
 .param-name.mapped .live-dot { background: hsl(174 50% 35%); border-color: hsl(174 50% 45%); }
 .param-name.live .live-dot { background: #2dd4bf; box-shadow: 0 0 6px #2dd4bf; }
 .param-row input[type="range"] { width: 100%; accent-color: var(--trace); margin: 0; }
+/* the value slider's track also carries the zone's sweep range (read-only) */
+.param-row .value-track { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.param-row .value-track input[type="range"] { display: block; }
+.param-row .sweep-rail { position: relative; height: 5px; border-radius: 3px; background: hsl(250 20% 16%); margin: 0 7px; }
+.param-row .sweep-rail[hidden] { display: none; }
+.param-row .sweep-span {
+  position: absolute; top: 0; height: 100%; border-radius: 3px;
+  background: hsl(174 50% 42%); box-shadow: 0 0 6px hsl(174 60% 45% / .6);
+}
+.param-row .thresh-readout[hidden] { display: none; }
 .param-row .value-readout { font-family: var(--mono); font-size: 10px; color: var(--ink); text-align: right; }
 .param-row .thresh-readout { font-family: var(--mono); font-size: 9px; color: var(--ink-dim); text-align: right; }
 .param-row .thresh-track { position: relative; height: 18px; touch-action: none; }
@@ -106,7 +116,11 @@
 
 /* effect chain */
 .chain-list { display: grid; gap: 4px; }
-.chain-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 8px; background: var(--well); border: 1px solid var(--well-line); font-size: 10px; }
+.chain-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; background: var(--well); border: 1px solid var(--well-line); font-size: 10px; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.chain-list.editable .chain-row { cursor: grab; }
+.chain-row .grip { color: var(--ink-dim); font-size: 11px; letter-spacing: -2px; opacity: .6; }
+.chain-list:not(.editable) .chain-row .grip { visibility: hidden; }
+.chain-row.lifting { border-color: var(--sim); box-shadow: 0 0 10px hsl(16 100% 60% / .45); background: hsl(250 22% 12%); }
 .chain-row .pos { font-family: var(--mono); color: var(--ink-dim); width: 1.6rem; text-align: right; }
 .chain-row .nm { flex: 1; letter-spacing: .08em; color: var(--ink); }
 .chain-row .rowbtn { font-size: 9px; }
@@ -169,19 +183,21 @@ body.gc-tab #progName, body.gc-tab .lib-name { text-transform: none; }
   #gcTab, #gcTop { padding: 8px 12px 4px; }
   .chains { grid-template-columns: 1fr; }
   .param-row {
-    grid-template-columns: 1fr auto;
-    grid-template-areas: "name value" "slider slider";
+    grid-template-columns: 1fr auto auto;
+    grid-template-areas: "name value tread" "slider slider slider";
     row-gap: 6px; padding: 7px 0;
   }
   .param-row .param-name { grid-area: name; }
-  .param-row > input[type="range"] { grid-area: slider; }
+  .param-row .value-track { grid-area: slider; }
   .param-row .value-readout { grid-area: value; }
+  .param-row .thresh-readout { grid-area: tread; }
   .screen-svg { width: 160px; height: 160px; }
 }
 
 /* a parameter row is a pick target: lit when chosen here or by a zone tap */
-.param-row { cursor: pointer; border-radius: 8px; padding-left: 6px; padding-right: 6px; margin: 0 -6px; }
-.param-row:hover { background: hsl(250 20% 14% / .6); }
+.param-row { border-radius: 8px; padding-left: 6px; padding-right: 6px; margin: 0 -6px; }
+.param-row:has(.param-name.mapped) { cursor: pointer; }
+.param-row:has(.param-name.mapped):hover { background: hsl(250 20% 14% / .6); }
 .param-row.on { background: hsl(16 100% 60% / .10); box-shadow: inset 0 0 0 1px hsl(16 100% 60% / .45); }
 .param-row.on .param-name { color: var(--ink); }
 .axis-tag { font-family: var(--mono); font-size: 8px; letter-spacing: .12em; color: var(--sim); margin-left: 8px; }

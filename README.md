@@ -148,13 +148,16 @@ The strips are half again as tall on this tab. Right under them sit
 the Library / Set List; below those: **Connection** (link: simulated / WiFi
 / USB, connect, refresh setups, ping), **Active Setup** (colour, slot,
 name, save / discard / delete), **Parameters** (the static value of every parameter of the
-Setup's effects — tap a row to light it and select the zone that drives it
-on the strip, which then reads in that parameter's units; a tap on a zone
-lights its row in return; the LED at the left of each row is the map
+Setup's effects — tap a driven row to select its zone on the strip, which
+then reads in that parameter's units, and a tap on a zone lights its row
+in return; a driven row also shows the sweep the zone set as a read-only
+band under its value slider with the low → high values beside it; the LED
+at the left of each row is the map
 toggle — lit means a zone drives it: tap a dark LED and pick PITCH or YAW
 to add a zone for it, tap a lit one to take it off the pedal on both
 strips; an axis left with no zone keeps its last parameter on the unit
-until you add one, since the unit never runs an axis empty), **Effect Chain** (audio order), **Firmware** (WiFi update of the
+until you add one, since the unit never runs an axis empty), **Effect Chain** (audio order; drag a row to reorder, press-and-hold on
+a phone), **Firmware** (WiFi update of the
 unit, DSP update mode) and **Log**.
 
 The **Library of Setups** column is the unit's Setup bank, shown in two

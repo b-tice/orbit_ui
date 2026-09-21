@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.16';
+const APP_VERSION = '1.17';
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -600,7 +600,7 @@ function gcSelectParam(eff, par) {
     const z = [...drawOrder(axis)].reverse().find(x => x.type === 'ctl' && x.eff === eff && x.par === par);
     if (z) { selectZone(axis, z); return true; }
   }
-  if (sel) { const a = state.axes[sel.axisKey]; sel = null; render(a); }   /* keep the row lit: it has no zone yet */
+  if (sel) selectZone(state.axes[sel.axisKey], null);
   return false;
 }
 /* take a parameter off the pedal: drop every zone that drives it, on both strips */
@@ -694,14 +694,35 @@ function chipLayout(axis, g) {
   return { chips, rows: Math.max(1, rows.length) };
 }
 
+/* Ground Control: the Controller zone whose units the value axis reads in —
+   the selected one on this axis, else the topmost */
+const gcAxisZone = axis => (isGC()
+  ? (zoneById(axis, sel && sel.axisKey === axis.key ? sel.id : null) || [...drawOrder(axis)].reverse().find(z => z.type === 'ctl') || null)
+  : null);
+/* the left gutter must fit the widest value label ("14000 Hz", "-12 st") */
+let measureCtx = null;
+function textWidth(text, px) {
+  if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d');
+  measureCtx.font = `${px}px Michroma, sans-serif`;
+  return measureCtx.measureText(text).width;
+}
+function gcGutter(axis) {
+  const gz = gcAxisZone(axis);
+  if (!gz || gz.type !== 'ctl') return GEO.left;
+  let wmax = 0;
+  for (const v of [0, 64, 127]) wmax = Math.max(wmax, textWidth(gcFormat(gz, v), 9));
+  wmax = Math.max(wmax, textWidth(gcDef(gz).name.toUpperCase(), 8));
+  return Math.max(GEO.left, Math.ceil(wmax) + 14);
+}
+
 function axisGeom(axis) {
   const svg = editors[axis.key].svg;
   const w = svg.clientWidth || svg.parentElement.clientWidth || 800;
-  const x0 = GEO.left, x1 = w - GEO.right;
+  const x0 = isGC() ? gcGutter(axis) : GEO.left, x1 = w - GEO.right;
   const tx = t => x0 + t * (x1 - x0);
   /* chip rows decide how tall the header band is */
   const probe = chipLayout(axis, { tx });
-  const top = 12 + probe.rows * GEO.chipRow + 4;
+  const top = 12 + probe.rows * GEO.chipRow + 4 + (isGC() ? 10 : 0);   /* room for the parameter name over the value axis */
   /* the Ground Control strips are half again as tall: the curve IS the sweep there */
   const h = Math.round(GEO.height * (isGC() ? 1.5 : 1)) + (probe.rows - 1) * GEO.chipRow;
   const y0 = top, y1 = h - GEO.bottom;
@@ -732,7 +753,7 @@ function render(axis) {
   const inv = state.tab === 'analog' && !!axis.outputs.analog.invert;
   /* Ground Control: the value axis reads in the selected (else topmost)
      Controller zone's parameter units — each zone has its own scale */
-  const gz = isGC() ? (zoneById(axis, sel && sel.axisKey === axis.key ? sel.id : null) || [...drawOrder(axis)].reverse().find(z => z.type === 'ctl') || null) : null;
+  const gz = gcAxisZone(axis);
   const gridLabel = gz && gz.type === 'ctl' ? (v => gcFormat(gz, v)) : OUT().gridLabel;
   for (const v of [0, 63.5, 127]) {
     const y = g.ty(v);
@@ -740,7 +761,7 @@ function render(axis) {
     parts.push(`<line x1="${g.x0}" y1="${y}" x2="${g.x1}" y2="${y}" stroke="var(--well-line)" stroke-dasharray="2 5"/>`);
     parts.push(`<text x="${g.x0 - 8}" y="${y + 3}" font-size="9" text-anchor="end">${gridLabel(inv ? 127 - lv : lv)}</text>`);
   }
-  if (gz && gz.type === 'ctl') parts.push(`<text x="${g.x0 - 8}" y="${g.y0 - 6}" font-size="8" text-anchor="end" fill="${colorOf(gz).c}">${gcDef(gz).name.toUpperCase()}</text>`);
+  if (gz && gz.type === 'ctl') parts.push(`<text x="${g.x0 - 8}" y="${g.y0 - 9}" font-size="8" text-anchor="end" fill="${colorOf(gz).c}">${gcDef(gz).name.toUpperCase()}</text>`);
   /* travel ticks */
   for (const t of [0, 0.25, 0.5, 0.75, 1]) {
     const x = g.tx(t);

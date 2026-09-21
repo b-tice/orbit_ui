@@ -74,7 +74,7 @@
     <section class="${PANEL}" id="gc-chain">
       <div class="gc-head"><h3>EFFECT CHAIN</h3></div>
       <div id="gc-chain-list" class="chain-list"></div>
-      <div class="gc-help">Audio order on the DSP. ▲ ▼ reorder; changes apply at once and save with the Setup.</div>
+      <div class="gc-help">Audio order on the DSP. Drag a row to reorder (press and hold on a phone); changes apply at once and save with the Setup.</div>
     </section>
     <section class="${PANEL}" id="gc-screens">
       <div class="gc-head"><h3>SCREENS</h3><span class="gc-status">what the unit's two displays show — drag the ▲ markers above to play the pedal</span></div>
@@ -201,12 +201,22 @@
       if (paramSensorMapped(row.eff, row.par)) { if (hooks.onUnmap) hooks.onUnmap(row.eff, row.par); }
       else openMapMenu(led, row);
     });
-    div.append(row.nameCell, row.valueInput, row.valueReadout);
+    /* the value slider sits in a track that also shows the sweep range the
+       zones set (read-only here: the strips own it) */
+    const track = document.createElement('div'); track.className = 'value-track';
+    row.sweepRail = document.createElement('div'); row.sweepRail.className = 'sweep-rail'; row.sweepRail.hidden = true;
+    row.sweepSpan = document.createElement('div'); row.sweepSpan.className = 'sweep-span';
+    row.sweepRail.appendChild(row.sweepSpan);
+    track.append(row.valueInput, row.sweepRail);
+    row.threshReadout.hidden = true;
+    div.append(row.nameCell, track, row.valueReadout, row.threshReadout);
     row.el = div;
-    /* a tap on the row (not its slider) picks the parameter: the strip that
-       drives it selects that zone and reads in its units */
+    /* a tap on a driven row (not its slider) selects its zone on the strip,
+       which then reads in this parameter's units; the row lights only as
+       that selection's echo — an undriven row has nothing to select */
     div.addEventListener('click', e => {
       if (e.target.closest('input, button')) return;
+      if (!paramSensorMapped(row.eff, row.par)) return;   /* nothing to show: no highlight */
       pickParam(row.eff, row.par, true);
     });
     return div;
@@ -242,12 +252,13 @@
   function refreshThreshReadout(row) {
     const lo = parseFloat(row.thLoInput.value), hi = parseFloat(row.thHiInput.value);
     row.threshReadout.textContent = `${lo.toFixed(row.def.decimals)} → ${hi.toFixed(row.def.decimals)}`;
-    if (!row.threshSpan) return;
+    row.threshReadout.title = 'the sweep the pedal plays, from the zone on the strip';
+    if (!row.sweepSpan) return;
     const mn = row.def.min, range = row.def.max - mn;
     if (range > 0) {
       const l = Math.max(0, Math.min(1, (Math.min(lo, hi) - mn) / range)), r = Math.max(0, Math.min(1, (Math.max(lo, hi) - mn) / range));
-      row.threshSpan.style.left = (l * 100).toFixed(1) + '%';
-      row.threshSpan.style.width = ((r - l) * 100).toFixed(1) + '%';
+      row.sweepSpan.style.left = (l * 100).toFixed(1) + '%';
+      row.sweepSpan.style.width = ((r - l) * 100).toFixed(1) + '%';
     }
   }
   function sendParam(row) {
@@ -399,6 +410,8 @@
       row.nameCell.classList.toggle('mapped', a >= 0);
       row.axisTag.textContent = a < 0 ? '' : (a === 0 ? 'PITCH' : 'YAW');
       row.nameCell.querySelector('.live-dot').title = a >= 0 ? 'driven by the pedal — tap to unmap' : 'tap to map this parameter to the pedal';
+      row.sweepRail.hidden = a < 0; row.threshReadout.hidden = a < 0;
+      if (a >= 0) refreshThreshReadout(row);
     }
   }
   function setActivePreset(info) { activePreset = info; editorDirty = false; renderActivePreset(); refreshCurveVisibility(true); }
@@ -439,25 +452,57 @@
     const list = ui.chainList; list.innerHTML = '';
     const chain = getActiveChain(), on = connected(), editable = !!activePreset;
     if (!chain.length) { list.innerHTML = `<div class="gc-empty">${activePreset ? 'empty chain — put an effect on PITCH or YAW above' : 'no Setup loaded'}</div>`; return; }
+    list.classList.toggle('editable', on && editable);
     chain.forEach((id, idx) => {
-      const row = document.createElement('div'); row.className = 'chain-row';
-      row.innerHTML = `<span class="pos">${idx + 1}.</span><span class="nm">${esc(id < MAX_E ? G.EFFECT_NAMES[id] : 'id ' + id)}</span>`;
-      const up = document.createElement('button'); up.type = 'button'; up.className = 'rowbtn'; up.textContent = '▲'; up.disabled = !on || !editable || idx === 0;
-      const dn = document.createElement('button'); dn.type = 'button'; dn.className = 'rowbtn'; dn.textContent = '▼'; dn.disabled = !on || !editable || idx === chain.length - 1;
-      up.addEventListener('click', () => moveChainSlot(idx, -1));
-      dn.addEventListener('click', () => moveChainSlot(idx, 1));
-      row.append(up, dn); list.appendChild(row);
+      const row = document.createElement('div'); row.className = 'chain-row'; row.dataset.eff = id;
+      row.innerHTML = `<span class="pos">${idx + 1}.</span><span class="nm">${esc(id < MAX_E ? G.EFFECT_NAMES[id] : 'id ' + id)}</span><span class="grip" aria-hidden="true">⋮⋮</span>`;
+      list.appendChild(row);
     });
   }
-  function moveChainSlot(idx, delta) {
-    if (!activePreset) return;
-    const chain = [...getActiveChain()], t = idx + delta;
-    if (t < 0 || t >= chain.length) return;
-    [chain[idx], chain[t]] = [chain[t], chain[idx]];
-    activePreset.chain = chain;
-    tx(G.frames.setChainOrder(chain));
-    log('tx', `SET_CHAIN_ORDER [${chain.join(',')}]`);
-    renderChainList(); markEditorDirty();
+  /* drag a chain row to reorder. Mouse: drags at once (a ~6 px move separates
+     it from a click). Touch: a short press-and-hold first, so a swipe still
+     scrolls the page. The row itself moves in the list as the pointer
+     crosses its neighbours; on release the new order goes to the unit. */
+  const CHAIN_HOLD_MS = 320;
+  let chainDragging = false;
+  function wireChainDrag(list) {
+    list.addEventListener('touchmove', e => { if (chainDragging) e.preventDefault(); }, { passive: false });
+    list.addEventListener('pointerdown', e => {
+      if (e.button) return;
+      const row = e.target.closest('.chain-row');
+      if (!row || !list.classList.contains('editable')) return;
+      const touch = e.pointerType === 'touch';
+      let held = !touch, moving = false, holdTimer = null;
+      const startY = e.clientY;
+      if (touch) holdTimer = setTimeout(() => { held = true; chainDragging = true; row.classList.add('lifting'); }, CHAIN_HOLD_MS);
+      const move = ev => {
+        if (!held) { if (Math.abs(ev.clientY - startY) > 8) cleanup(); return; }
+        if (!moving) { if (Math.abs(ev.clientY - startY) < 6) return; moving = true; chainDragging = true; row.classList.add('lifting'); }
+        const rows = [...list.querySelectorAll('.chain-row')].filter(r => r !== row);
+        let before = null;
+        for (const r of rows) { const m = r.getBoundingClientRect(); if (ev.clientY < m.top + m.height / 2) { before = r; break; } }
+        if (before) { if (row.nextSibling !== before) list.insertBefore(row, before); }
+        else if (list.lastElementChild !== row) list.appendChild(row);
+        list.querySelectorAll('.chain-row .pos').forEach((p, i) => { p.textContent = (i + 1) + '.'; });
+      };
+      const cleanup = () => {
+        clearTimeout(holdTimer); chainDragging = false; row.classList.remove('lifting');
+        document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', up);
+      };
+      const up = () => {
+        const wasMoving = moving;
+        cleanup();
+        if (!wasMoving || !activePreset) { renderChainList(); return; }
+        const chain = [...list.querySelectorAll('.chain-row')].map(r => +r.dataset.eff);
+        const old = getActiveChain();
+        if (chain.join() === old.join()) { renderChainList(); return; }
+        activePreset.chain = chain;
+        tx(G.frames.setChainOrder(chain));
+        log('tx', `SET_CHAIN_ORDER [${chain.join(',')}]`);
+        renderChainList(); markEditorDirty();
+      };
+      document.addEventListener('pointermove', move); document.addEventListener('pointerup', up); document.addEventListener('pointercancel', up);
+    });
   }
   function defaultParamIdxForEffect(id) {
     const ps = (EFFECTS[id] || {}).params || [];
@@ -889,6 +934,7 @@
       remove(activePreset.letter, activePreset.digit);
     });
     renderParamGrid();
+    wireChainDrag(ui.chainList);
     initFirmware();
     setLinkKind(hooks.linkKind || availableKinds()[0]);
     refreshCurveVisibility(); renderScreens(); renderChainList();
