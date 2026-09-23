@@ -127,6 +127,24 @@ body {
 
 /* ── axis panels ─────────────────────────────────────────────────── */
 main { display: grid; gap: 20px; padding: 10px 22px 6px; max-width: 1180px; margin: 0 auto; box-sizing: border-box; }
+/* upright PITCH (footer switch): a tall, narrow panel to the right of YAW */
+main.vert { grid-template-columns: minmax(0, 1.95fr) minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; }   /* the golden split, YAW +7 % / PITCH −7 % */
+main.vert .axis-panel[data-axis="yaw"] { grid-column: 1; grid-row: 1; }
+main.vert .librarian { grid-column: 1; grid-row: 2; }
+main.vert .lib-list.gc-bank { grid-template-columns: 1fr; }   /* the narrower column: one bank row per line */
+main.vert .midi-in { display: none; }   /* the test widget would eat the Library's share of the height */
+main.vert .axis-panel[data-axis="pitch"] { grid-column: 2; grid-row: 1 / span 2; }
+.lib-outer.moved { display: none; }
+main.vert .axis-panel[data-axis="pitch"] .axis-head { gap: 8px 10px; }
+@media (max-width: 760px) {
+  /* phone: YAW across the top; Library | PITCH side by side under it */
+  main.vert { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); grid-template-rows: auto auto; gap: 12px; }
+  main.vert .axis-panel[data-axis="pitch"] .axis-title small { display: none; }   /* no room for "heel → toe" */
+  main.vert .axis-panel[data-axis="yaw"] { grid-column: 1 / span 2; grid-row: 1; }
+  main.vert .librarian { grid-column: 1; grid-row: 2; grid-template-columns: 1fr; gap: 10px; padding: 12px; }
+  main.vert .axis-panel[data-axis="pitch"] { grid-column: 2; grid-row: 2; padding: 12px 10px 10px; }
+  main.vert .axis-panel[data-axis="pitch"] .axis-head { margin-bottom: 8px; }
+}
 
 .axis-panel { padding: 16px 16px 12px; }
 
@@ -271,9 +289,9 @@ svg .zone-label { letter-spacing: .08em; }
 .modal-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
 
 /* ── set list tools ──────────────────────────────────────────────── */
-.sl-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; min-height: 32px; }
+.sl-tools { display: flex; align-items: center; gap: 8px; min-height: 32px; margin-left: auto; min-width: 0; }   /* on the heading's row */
 .sl-tools select {
-  flex: 1; min-width: 0;
+  flex: 1 1 90px; min-width: 0; max-width: 200px;
   font-family: var(--mono); font-size: 12px; color: var(--ink);
   background: var(--well); border: 1px solid var(--well-line); border-radius: 7px; padding: 6px 8px; outline: none;
 }
@@ -298,8 +316,9 @@ svg .zone-label { letter-spacing: .08em; }
   padding: 16px;
 }
 .lib-col { min-width: 0; }
-.lib-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; min-height: 22px; }
-.lib-head h2 { margin: 0; font-size: 11px; font-weight: 400; letter-spacing: .18em; color: var(--ink); white-space: nowrap; flex: none; }
+.lib-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; min-height: 32px; }
+.lib-col:last-child .lib-head h2 { flex: none; }   /* "SET LIST" is short: never truncate it */
+.lib-head h2 { margin: 0; font-size: 11px; font-weight: 400; letter-spacing: .18em; color: var(--ink); white-space: nowrap; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .lib-head .ghostbtn { flex: none; white-space: nowrap; }
 .lib-note { font-size: 8px; letter-spacing: .1em; color: var(--ink-dim); text-transform: uppercase; margin-left: auto; text-align: right; min-width: 0; }
 .lib-list {

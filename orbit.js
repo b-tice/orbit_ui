@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.21';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.27';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -639,12 +639,17 @@ const editors = {}; // key -> {svg, outEl}
 
 function buildPanels() {
   const main = document.getElementById('axes');
+  const lib = main.querySelector('.librarian');
+  if (lib) document.querySelector('.lib-outer').appendChild(lib);   /* keep it while the strips rebuild */
   main.innerHTML = '';
+  main.classList.toggle('vert', !!state.vertPitch);   /* upright PITCH: to the right of YAW */
+  placeLibrarian();
   /* PITCH above YAW on every tab, like the unit's own screens (v1.20) */
   for (const key of ['pitch', 'yaw']) {
     const axis = state.axes[key];
     const panel = document.createElement('section');
     panel.className = 'axis-panel ambient amb-surface amb-chamfer amb-elevation-2 ambx-panel amb-mat-blasted amb-rounded-xl';
+    panel.dataset.axis = key;
     panel.innerHTML = `
       <div class="axis-head">
         <div class="axis-title"><b>${axis.label}</b><small>${axis.sub}</small></div>
@@ -723,27 +728,104 @@ function gcGutter(axis) {
    (x, y) → (H − y, W − x), so heel is at the bottom, toe at the top and
    the value runs left → right. Labels and chips are re-placed upright. */
 const isVert = axis => axis.key === 'pitch' && !!state.vertPitch;
-const VERT_TRAVEL = 400;   /* the strip's height when upright (travel length, before chips) */
+let vertYawExtra = 0;   /* what YAW's strip adds (or gives up) so YAW + Library end level with PITCH */
+let matching = false;
+const VERT_GAP = 20;    /* main's grid gap */
+/* upright view: the Library sits under YAW, and YAW's strip is sized so the
+   two together are as tall as PITCH. If that would squash YAW, the Library's
+   lists give up rows instead. */
+const PHI = 1.618;
+const VERT_ROWS = 4;      /* the Library's lists show exactly this many rows upright (3 on a phone) */
+let vertTravel = null;    /* PITCH's travel length, derived so the golden heights leave room for those rows */
+/* on a phone the upright view is YAW across the top, then Library | PITCH side by side */
+const vertPhone = () => window.matchMedia('(max-width: 760px)').matches;
+function matchVertHeights() {
+  if (!state.vertPitch || matching || !editors.yaw || !editors.pitch) return;
+  const yp = editors.yaw.svg.closest('.axis-panel'), pp = editors.pitch.svg.closest('.axis-panel');
+  const lib = document.getElementById('axes').querySelector('.librarian');
+  if (!yp || !pp || !lib) return;
+  matching = true;
+  const phone = vertPhone();
+  /* 1. the Library: lists exactly VERT_ROWS rows tall */
+  const rows = phone ? 3 : VERT_ROWS;
+  const lists = lib.querySelectorAll('.lib-list');
+  const row = lib.querySelector('.lib-row, .set-row');
+  const rowH = row ? row.offsetHeight : 31;
+  const L = rows * rowH + (rows - 1) * 6 + 14;   /* rows, gaps, padding + border */
+  lists.forEach(l => { l.style.height = L + 'px'; l.style.maxHeight = L + 'px'; l.style.minHeight = '0'; });
+  /* 2. PITCH: desktop — YAW : Library = φ : 1 and YAW + Library = PITCH, so
+        PITCH is (1 + φ) × Library tall; phone — PITCH sits beside the
+        Library and matches its height. Its travel length follows. */
+  const libH = lib.offsetHeight;
+  const pitchTarget = phone ? libH : Math.round(libH * (1 + PHI)) + VERT_GAP;
+  const pg = axisGeom(state.axes.pitch);
+  const pitchChrome = pp.offsetHeight - pg.w;          /* header, padding: everything but the drawing */
+  const travelNow = pg.x1 - pg.x0;
+  const travelWant = pitchTarget - pitchChrome - (pg.w - travelNow);
+  if (Math.abs(travelWant - travelNow) >= 2) { vertTravel = Math.max(160, Math.round(travelWant)); render(state.axes.pitch); }
+  /* 3. YAW takes the rest (desktop); on a phone it keeps its normal height */
+  const diff = phone ? -vertYawExtra : (pp.offsetHeight - VERT_GAP - lib.offsetHeight) - yp.offsetHeight;
+  if (Math.abs(diff) >= 2) { vertYawExtra += diff; render(state.axes.yaw); }
+  matching = false;
+}
+/* the Library section moves under YAW in the upright view and back after */
+function placeLibrarian() {
+  const main = document.getElementById('axes'), outer = document.querySelector('.lib-outer'), lib = document.querySelector('.librarian');
+  if (state.vertPitch) { if (lib.parentElement !== main) main.appendChild(lib); outer.classList.add('moved'); }
+  else {
+    if (lib.parentElement !== outer) outer.appendChild(lib);
+    outer.classList.remove('moved');
+    lib.querySelectorAll('.lib-list').forEach(l => { l.style.maxHeight = ''; l.style.height = ''; l.style.minHeight = ''; });
+  }
+}
+const VERT_TRAVEL = 440;   /* the strip's height when upright (travel length) */
+/* upright, the chips sit in rows above the strip: pack their widths into the panel */
+function packChips(chips, avail) {
+  let row = 0, x = 8;
+  const out = chips.map(c => {
+    if (x + c.w > avail && x > 8) { row++; x = 8; }
+    const o = { row, cx: x + c.w / 2 };
+    x += c.w + 6;
+    return o;
+  });
+  return { rows: chips.length ? row + 1 : 0, at: out };
+}
 
 function axisGeom(axis) {
   const svg = editors[axis.key].svg;
   const vert = isVert(axis);
   const wide = svg.clientWidth || svg.parentElement.clientWidth || 800;
   const x0 = isGC() ? gcGutter(axis) : GEO.left;
-  /* upright: travel is a fixed length; the value axis spans the panel */
-  const w = vert ? Math.round(VERT_TRAVEL * (isGC() ? 1.2 : 1)) + x0 + GEO.right : wide;
+  if (vert) {
+    /* upright: travel is a fixed length up the panel, the value axis is the
+       panel's (narrow) width; chips go in rows ABOVE the strip, which in the
+       laid-out frame is the right margin past x1 */
+    const pack = packChips(chipLayout(axis, { tx: t => t }).chips, wide - 16);
+    const right = 12 + pack.rows * GEO.chipRow + 6;
+    const w = (vertTravel || Math.round(VERT_TRAVEL * (isGC() ? 1.2 : 1))) + x0 + right;
+    const x1 = w - right, h = wide;
+    const y0 = 12, y1 = h - GEO.bottom;
+    return {
+      w, h, x0, x1, y0, y1, tx: t => x0 + t * (x1 - x0), vert, pack,
+      ty: v => y1 - (v / 127) * (y1 - y0),
+      it: px => Math.max(0, Math.min(1, (px - x0) / (x1 - x0))),
+      iv: py => Math.max(0, Math.min(127, (1 - (py - y0) / (y1 - y0)) * 127)),
+    };
+  }
+  const w = wide;
   const x1 = w - GEO.right;
   const tx = t => x0 + t * (x1 - x0);
   /* chip rows decide how tall the header band is */
   const probe = chipLayout(axis, { tx });
-  /* upright, the chip rows become columns up the right side, each as wide as the widest chip */
-  const chipCol = vert ? Math.max(...probe.chips.map(c => c.w), 0) + 8 : GEO.chipRow;
-  const top = 12 + probe.rows * chipCol + 4 + (isGC() ? 10 : 0);   /* room for the parameter name over the value axis */
-  /* the Ground Control strips are half again as tall: the curve IS the sweep there */
-  const h = vert ? wide : Math.round(GEO.height * (isGC() ? 1.5 : 1)) + (probe.rows - 1) * GEO.chipRow;
+  const top = 12 + probe.rows * GEO.chipRow + 4 + (isGC() ? 10 : 0);   /* room for the parameter name over the value axis */
+  /* the Ground Control strips are half again as tall: the curve IS the sweep there;
+     beside an upright PITCH, YAW grows to the same panel height */
+  const h = state.vertPitch && axis.key === 'yaw' && !vertPhone()
+    ? Math.round(VERT_TRAVEL * (isGC() ? 1.2 : 1)) + GEO.left + 18 + vertYawExtra
+    : Math.round(GEO.height * (isGC() ? 1.5 : 1)) + (probe.rows - 1) * GEO.chipRow;
   const y0 = top, y1 = h - GEO.bottom;
   return {
-    w, h, x0, x1, y0, y1, tx, vert, chipCol,
+    w, h, x0, x1, y0, y1, tx, vert,
     ty: v => y1 - (v / 127) * (y1 - y0),
     it: px => Math.max(0, Math.min(1, (px - x0) / (x1 - x0))),
     iv: py => Math.max(0, Math.min(127, (1 - (py - y0) / (y1 - y0)) * 127)),
@@ -939,6 +1021,7 @@ function render(axis) {
   }
   const text = outs.length ? outs.join(' · ') : (idle.length ? idle.join(' · ') : 'DEAD');
   ed.outEl.textContent = text + (analog && axis.outputs.analog.invert ? '  ⇅' : '');
+  matchVertHeights();
 }
 
 /* after the upright turn, put every label and chip back on its feet at the
@@ -948,12 +1031,16 @@ function verticalize(svg, g) {
   const grp = svg.firstElementChild;
   const map = (x, y) => ({ x: g.h - y, y: g.w - x });
   const move = el => { svg.appendChild(el); };   /* out of the turned group: plain coordinates again */
+  let vi = 0;
   for (const t of [...grp.querySelectorAll('text[data-lbl]')]) {
     const role = t.dataset.lbl, x = +t.getAttribute('x'), y = +t.getAttribute('y');
     t.removeAttribute('transform');
     if (role === 'val') {
+      /* along the bottom: the low end flush left, the high end flush right */
       const p = map(g.x0, y - 3);
-      t.setAttribute('x', p.x); t.setAttribute('y', p.y + 14); t.setAttribute('text-anchor', 'middle');
+      const anchor = vi === 0 ? 'start' : vi === 2 ? 'end' : 'middle'; vi++;
+      if (anchor === 'middle' && g.h < 220) { t.remove(); continue; }   /* no room for a middle label on a narrow strip */
+      t.setAttribute('x', anchor === 'start' ? p.x - 2 : anchor === 'end' ? p.x + 2 : p.x); t.setAttribute('y', p.y + 14); t.setAttribute('text-anchor', anchor);
     } else if (role === 'tick') {
       const p = map(x, g.y1);
       t.setAttribute('x', p.x - 7); t.setAttribute('y', p.y + 3); t.setAttribute('text-anchor', 'end');
@@ -970,16 +1057,16 @@ function verticalize(svg, g) {
     }
     move(t);
   }
-  for (const c of [...grp.querySelectorAll('g[data-role=chip]')]) {
+  /* chips: rows above the strip, in travel order */
+  [...grp.querySelectorAll('g[data-role=chip]')].forEach((c, i) => {
     const r = c.querySelector('rect'), dot = c.querySelector('circle'), tx = c.querySelector('text');
-    const w = +r.getAttribute('width'), cx = +r.getAttribute('x') + w / 2;
-    const cy = 12 + (+c.dataset.row) * g.chipCol + g.chipCol / 2;   /* its column, up the right side */
-    const p = map(cx, cy);
-    r.setAttribute('x', p.x - w / 2); r.setAttribute('y', p.y - 8.5);
-    dot.setAttribute('cx', p.x - w / 2 + 9); dot.setAttribute('cy', p.y);
-    tx.setAttribute('x', p.x + 6); tx.setAttribute('y', p.y + 3.5);
+    const w = +r.getAttribute('width'), at = g.pack.at[i] || { row: 0, cx: 8 + w / 2 };
+    const px = at.cx, py = 6 + at.row * GEO.chipRow + 8.5;
+    r.setAttribute('x', px - w / 2); r.setAttribute('y', py - 8.5);
+    dot.setAttribute('cx', px - w / 2 + 9); dot.setAttribute('cy', py);
+    tx.setAttribute('x', px + 6); tx.setAttribute('y', py + 3.5);
     move(c);
-  }
+  });
   /* resize cursors turn with the strip */
   for (const el of grp.querySelectorAll('[style*="ew-resize"]')) el.style.cursor = 'ns-resize';
 }
@@ -1599,7 +1686,7 @@ function loadSlot(i) {
 /* the Library column on the GROUND CONTROL tab: the unit's Setup bank */
 function renderGcLibrarian() {
   const on = GCTab.isConnected(), bank = GCTab.bank(), active = GCTab.activeId();
-  libTitleEl.textContent = 'LIBRARY OF SETUPS · GROUND CONTROL';
+  libTitleEl.textContent = state.vertPitch ? 'LIBRARY · GC' : 'LIBRARY OF SETUPS · GROUND CONTROL';   /* the upright view's column is narrow */
   libListEl.classList.toggle('gc-bank', bank.length > 0);   /* two columns: the bank is long */
   libListEl.innerHTML = bank.length
     ? bank.map(i => {
@@ -1634,7 +1721,7 @@ function renderLibrarian() {
   if (isGC()) { renderGcLibrarian(); return; }
   libListEl.classList.remove('gc-bank');
   const tab = state.tab;
-  libTitleEl.textContent = `LIBRARY OF SETUPS · ${tab === 'analog' ? 'ANALOG' : 'MIDI'}`;
+  libTitleEl.textContent = `${state.vertPitch ? 'LIBRARY' : 'LIBRARY OF SETUPS'} · ${tab === 'analog' ? 'ANALOG' : 'MIDI'}`;
   libListEl.innerHTML = lib().length
     ? lib().map(f => `
       <li class="lib-row${f.id === state.loaded[tab] ? ' on' : ''}" data-id="${f.id}">
@@ -1655,6 +1742,7 @@ function renderLibrarian() {
     }).join('')
     : `<li class="lib-empty">drag Setups here — order sets the PC #</li>`;
   progNum.value = loadedPC() ?? '—';
+  matchVertHeights();
 }
 
 /* ── Set List tools: one dropdown, + new, edit (dialog) ──────────── */
@@ -2191,9 +2279,10 @@ const vertToggle = document.getElementById('vertToggle');
 vertToggle.checked = !!state.vertPitch;
 vertToggle.addEventListener('change', () => {
   state.vertPitch = vertToggle.checked;
+  vertYawExtra = 0; vertTravel = null;
   saveState();
   closePopover();
-  render(state.axes.pitch);
+  refreshEditor();   /* the layout changes: both strips re-measure */
 });
 const gcSimToggle = document.getElementById('gcSimToggle');
 gcSimToggle.checked = !!state.gcSim;
@@ -2242,6 +2331,7 @@ let resizeTimer = null;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
+    if (state.vertPitch) { vertYawExtra = 0; vertTravel = null; }
     for (const key of ['yaw', 'pitch']) render(state.axes[key]);
   }, 80);
 });
