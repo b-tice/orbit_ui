@@ -191,6 +191,29 @@ simulator so far — they are the spec for the firmware:
 | `GET_PRESET_DUMP` 0x19 | `[L][D]` | `PRESET_INFO`, `PRESET_MASKS`, one `PRESET_VALUES` 0x94 per effect `[L][D][eff][n][f32 × n]`, one `PRESET_THRESH` 0x95 per assigned parameter `[L][D][axis][eff][par][lo f32][hi f32]`, a `PRESET_CURVE` 0x97 `[L][D][eff][par][33 × u8]` where a table is stored, then `PRESET_DUMP_END` 0x96 `[L][D]` |
 | `SET_PRESET_COLOR` 0x1a | `[L][D][colorIdx]` | `PRESET_INFO`, `PRESET_MASKS` |
 
+## On the pedal (v1.33, firmware stage 3.1)
+
+`tools/bundle.py` turns the page into `orbit/src/web_bundle.h`: one gzipped
+route per file, Ambient CSS trimmed to the rules the page uses, the Google
+Fonts link dropped (the pedal's WiFi has no internet; Michroma falls back to
+the system sans). About 85 KB gzipped. The Orbit firmware on the
+`orbit-s3-port-gctab` branch serves it from its access point (Orbit-XXXX,
+captive portal), with an OTA form at `/update`.
+
+The **ORBIT PEDAL** panel (`pedal.js`) is the pedal's settings editor,
+replacing the pedal's old settings page: it connects over the pedal's own
+WebSocket when the page is served by the pedal, or over USB (Web Serial, on
+Chrome / Edge) from anywhere else. It shows firmware, hosted / standalone,
+IMU calibration and EXP health; **tare**; the DAW-mode MIDI settings
+(transmit channel, per-axis send / CC / invert / output window, tap note,
+WiFi on at next power-up) with **apply** (live) and **save to pedal**
+(flash). While connected, the pedal's live position drives the ▲ markers on
+every tab and the header LED turns teal.
+
+Served by the pedal, the Ground Control tab is offered only as the simulated
+unit until the SysEx tunnel (stage 3.2) exists — the pedal's socket carries
+the pedal's own frames.
+
 ## Interactions
 
 | Gesture | Effect |
@@ -235,7 +258,9 @@ offline).
 - `index.html` — page shell
 - `orbit.css` — night theme overrides + app/editor styles
 - `orbit.js` — all editor logic (zone model + migration, SVG rendering, gestures, popovers, librarian, save review)
-- `link.js` — how the page reaches a Ground Control: WebSocket (page served by the pedal), Web Serial (USB) or the simulator
+- `link.js` — how the page reaches a device: WebSocket (page served by the pedal), Web Serial (USB) or the Ground Control simulator
+- `pedal.js` — the ORBIT PEDAL panel: the pedal's settings over its bridge protocol, live position → markers
+- `tools/bundle.py` — bundles the page into the Orbit firmware header
 - `gc.css` — the Ground Control tab's styles (on the same night tokens)
 - `gc/protocol.js` — the bridge protocol: frame codec, command / reply ids, PRESET_INFO / PRESET_MASKS (port of `gc_dsp/web/src/protocol.ts` + `types.ts`)
 - `gc/effects.js` — the effect / parameter table (port of `effects.ts`; wire-stable indices)

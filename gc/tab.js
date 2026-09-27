@@ -902,8 +902,9 @@
 
   /* ---- link selection ------------------------------------------------ */
   function availableKinds() {
+    /* served by the pedal, the socket is the PEDAL's; Ground Control frames
+       will ride a tunnel through it (stage 3.2) — not offered until then */
     const k = ['sim'];
-    if (window.GCLink.servedByPedal()) k.unshift('websocket');
     if ('serial' in navigator) k.push('serial');
     return k;
   }

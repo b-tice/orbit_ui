@@ -194,6 +194,18 @@ body.gc-tab #progName, body.gc-tab .lib-name { text-transform: none; }
   .screen-svg { width: 160px; height: 160px; }
 }
 
+/* the Orbit pedal panel */
+#pedalTab { display: grid; gap: 20px; padding: 10px 22px 6px; max-width: 1180px; margin: 0 auto; box-sizing: border-box; }
+.pd-settings { display: grid; gap: 12px; margin-top: 10px; }
+.pd-settings[hidden] { display: none; }
+.pd-grid { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
+.pd-axes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.pd-axis { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; background: var(--well); border: 1px solid var(--well-line); border-radius: 12px; padding: 10px 12px; }
+.pd-axis h4 { margin: 0; font-size: 10px; font-weight: 400; letter-spacing: .16em; color: var(--ink); width: 100%; }
+.pd-axis .field input, .pd-grid .field input { width: 52px; }
+.pd-axis .pair input { width: 48px; }
+@media (max-width: 640px) { #pedalTab { padding: 8px 12px 4px; } .pd-axes { grid-template-columns: 1fr; } }
+
 /* a parameter row is a pick target: lit when chosen here or by a zone tap */
 .param-row { border-radius: 8px; padding-left: 6px; padding-right: 6px; margin: 0 -6px; }
 .param-row:has(.param-name.mapped) { cursor: pointer; }

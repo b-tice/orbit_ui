@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.32';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.33';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -2290,7 +2290,9 @@ document.getElementById('appVersion').textContent = 'v' + APP_VERSION;
 const outTabs = [...document.querySelectorAll('.out-tab')];
 /* the GROUND CONTROL tab appears when a unit can be reached: the page is
    served by the pedal, or the footer switch stands in a simulated one */
-const gcAvailable = () => state.gcSim || GCLink.servedByPedal();
+/* on the pedal, the Ground Control tab waits for the tunnel (stage 3.2): until
+   then only the simulated unit is offered there */
+const gcAvailable = () => state.gcSim;
 function updateOutTabs() {
   outTabs.forEach(t => {
     if (t.dataset.tab === 'gc') t.hidden = !gcAvailable();
@@ -2327,6 +2329,19 @@ gcSimToggle.addEventListener('change', () => {
   saveState();
   updateOutTabs();
   refreshEditor();
+});
+/* the pedal itself: live position drives the markers on every tab */
+let pedalRenderAt = 0;
+Pedal.init({
+  mount: document.getElementById('pedalTab'),
+  onAxis: (pitch01, yaw01) => {
+    state.axes.pitch.sim = pitch01; state.axes.yaw.sim = yaw01;
+    const now = performance.now();
+    if (now - pedalRenderAt < 40) return;   /* ~25 Hz is plenty for the eye */
+    pedalRenderAt = now;
+    for (const key of ['yaw', 'pitch']) if (editors[key]) render(state.axes[key]);
+  },
+  onLink: on => { const led = document.getElementById('powerLed'); led.style.setProperty('--amb-led-color', on ? '#2dd4bf' : '#6366f1'); led.title = on ? 'Orbit pedal connected' : ''; },
 });
 GCTab.init({
   mount: document.getElementById('gcTab'),
