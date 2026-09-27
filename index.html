@@ -8,8 +8,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Michroma&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="ambient.css">
-<link rel="stylesheet" href="orbit.css?v=1.27">
-<link rel="stylesheet" href="gc.css?v=1.27">
+<link rel="stylesheet" href="orbit.css?v=1.32">
+<link rel="stylesheet" href="gc.css?v=1.32">
 </head>
 <body class="ambient amb-surface">
 
@@ -85,9 +85,14 @@
     <input type="checkbox" id="gcSimToggle">
     <span class="pol-switch"></span>
   </label>
-  <label class="polarity" title="test: draw the PITCH strip upright — heel at the bottom, toe at the top, value across">
+  <label class="polarity" title="test: YAW across the top, the PITCH strip drawn upright — heel at the bottom, toe at the top — and centred under it; the Library beside PITCH when it fits, else below">
     <span class="pol-lbl">vertical pitch</span>
     <input type="checkbox" id="vertToggle">
+    <span class="pol-switch"></span>
+  </label>
+  <label class="polarity" id="centerLabel" title="vertical pitch: centre the upright PITCH strip under YAW with the Library beside it — off, PITCH stands to the right of YAW at full height with the Library under YAW" hidden>
+    <span class="pol-lbl">pitch centered</span>
+    <input type="checkbox" id="centerToggle">
     <span class="pol-switch"></span>
   </label>
   <span class="foot-tools">
@@ -140,13 +145,13 @@
   </div>
 </div>
 
-<script src="gc/protocol.js?v=1.27"></script>
-<script src="gc/effects.js?v=1.27"></script>
-<script src="gc/curve.js?v=1.27"></script>
-<script src="gc/factory.js?v=1.27"></script>
-<script src="gc/sim.js?v=1.27"></script>
-<script src="link.js?v=1.27"></script>
-<script src="gc/tab.js?v=1.27"></script>
-<script src="orbit.js?v=1.27"></script>
+<script src="gc/protocol.js?v=1.32"></script>
+<script src="gc/effects.js?v=1.32"></script>
+<script src="gc/curve.js?v=1.32"></script>
+<script src="gc/factory.js?v=1.32"></script>
+<script src="gc/sim.js?v=1.32"></script>
+<script src="link.js?v=1.32"></script>
+<script src="gc/tab.js?v=1.32"></script>
+<script src="orbit.js?v=1.32"></script>
 </body>
 </html>

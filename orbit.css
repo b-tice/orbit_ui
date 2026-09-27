@@ -127,23 +127,32 @@ body {
 
 /* ── axis panels ─────────────────────────────────────────────────── */
 main { display: grid; gap: 20px; padding: 10px 22px 6px; max-width: 1180px; margin: 0 auto; box-sizing: border-box; }
-/* upright PITCH (footer switch): a tall, narrow panel to the right of YAW */
-main.vert { grid-template-columns: minmax(0, 1.95fr) minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; }   /* the golden split, YAW +7 % / PITCH −7 % */
-main.vert .axis-panel[data-axis="yaw"] { grid-column: 1; grid-row: 1; }
-main.vert .librarian { grid-column: 1; grid-row: 2; }
-main.vert .lib-list.gc-bank { grid-template-columns: 1fr; }   /* the narrower column: one bank row per line */
-main.vert .midi-in { display: none; }   /* the test widget would eat the Library's share of the height */
-main.vert .axis-panel[data-axis="pitch"] { grid-column: 2; grid-row: 1 / span 2; }
-.lib-outer.moved { display: none; }
+/* upright PITCH (footer switch): YAW across the top, the PITCH strip drawn
+   upright and centred under it; the Library beside PITCH when there is room */
+main.vert { --pitch-w: 360px; grid-template-columns: minmax(0, 1fr) var(--pitch-w) minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; }
+main.vert .axis-panel[data-axis="yaw"] { grid-column: 1 / -1; grid-row: 1; }
+main.vert .axis-panel[data-axis="pitch"] { grid-column: 2; grid-row: 2; }
 main.vert .axis-panel[data-axis="pitch"] .axis-head { gap: 8px 10px; }
+main.vert .librarian { grid-column: 1; grid-row: 2; }
+/* sub-mode: PITCH to the right of YAW, full height; the Library under YAW */
+main.vert.right { grid-template-columns: minmax(0, 1fr) var(--pitch-w); }
+main.vert.right .axis-panel[data-axis="yaw"] { grid-column: 1; grid-row: 1; }
+main.vert.right .axis-panel[data-axis="pitch"] { grid-column: 2; grid-row: 1 / span 2; }
+main.vert.right .librarian { grid-column: 1; grid-row: 2; }
+main.vert.right .lib-list.gc-bank { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+main.vert.right .midi-in { display: none; }
+main.vert.lib-below .librarian { grid-column: 1 / -1; grid-row: 3; }
+main.vert .librarian.lib-stack { grid-template-columns: 1fr; }
+main.vert .librarian.lib-stack .midi-in { display: none; }
+main.vert .lib-list.gc-bank { grid-template-columns: 1fr; }
+main.vert.lib-below .lib-list.gc-bank { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+.lib-outer.moved { display: none; }
 @media (max-width: 760px) {
-  /* phone: YAW across the top; Library | PITCH side by side under it */
-  main.vert { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); grid-template-rows: auto auto; gap: 12px; }
-  main.vert .axis-panel[data-axis="pitch"] .axis-title small { display: none; }   /* no room for "heel → toe" */
-  main.vert .axis-panel[data-axis="yaw"] { grid-column: 1 / span 2; grid-row: 1; }
-  main.vert .librarian { grid-column: 1; grid-row: 2; grid-template-columns: 1fr; gap: 10px; padding: 12px; }
-  main.vert .axis-panel[data-axis="pitch"] { grid-column: 2; grid-row: 2; padding: 12px 10px 10px; }
-  main.vert .axis-panel[data-axis="pitch"] .axis-head { margin-bottom: 8px; }
+  main.vert { --pitch-w: min(360px, 62vw); gap: 12px; }
+  main.vert.right { grid-template-columns: minmax(0, 1fr) var(--pitch-w) minmax(0, 1fr); }   /* the phone keeps the centred arrangement */
+  main.vert.right .axis-panel[data-axis="yaw"] { grid-column: 1 / -1; }
+  main.vert.right .axis-panel[data-axis="pitch"] { grid-column: 2; grid-row: 2; }
+  main.vert .axis-panel[data-axis="pitch"] .axis-title small { display: none; }
 }
 
 .axis-panel { padding: 16px 16px 12px; }
@@ -165,6 +174,7 @@ main.vert .axis-panel[data-axis="pitch"] .axis-head { gap: 8px 10px; }
 .axis-tools { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 /* polarity toggle (analog tab) */
 .polarity { display: flex; align-items: center; gap: 7px; cursor: pointer; margin-right: 6px; user-select: none; }
+.polarity[hidden] { display: none; }   /* the flex display would otherwise beat the hidden attribute */
 .polarity .pol-lbl { font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-dim); }
 .polarity input { position: absolute; opacity: 0; width: 0; height: 0; }
 .polarity .pol-switch {
@@ -291,7 +301,7 @@ svg .zone-label { letter-spacing: .08em; }
 /* ── set list tools ──────────────────────────────────────────────── */
 .sl-tools { display: flex; align-items: center; gap: 8px; min-height: 32px; margin-left: auto; min-width: 0; }   /* on the heading's row */
 .sl-tools select {
-  flex: 1 1 90px; min-width: 0; max-width: 200px;
+  flex: 1 1 90px; min-width: 88px; max-width: 200px;
   font-family: var(--mono); font-size: 12px; color: var(--ink);
   background: var(--well); border: 1px solid var(--well-line); border-radius: 7px; padding: 6px 8px; outline: none;
 }

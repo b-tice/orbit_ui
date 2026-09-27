@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.27';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.32';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -210,7 +210,8 @@ function defaultState() {
     names: { midi: 'INIT', analog: 'INIT', gc: '' },   /* SETUP field, per output tab */
     loaded: { midi: null, analog: null, gc: null },     /* library file id per output tab (gc: the unit's slot id) */
     gcSim: false,                                /* show the GROUND CONTROL tab against a simulated unit */
-    vertPitch: false,                            /* test: the PITCH strip drawn upright */
+    vertPitch: false,                            /* test: YAW on top, the PITCH strip drawn upright and centred under it */
+    pitchCentered: true,                         /* …centred under YAW (true) or to its right at full height (false) */
     axes: {
       yaw: {
         key: 'yaw', label: 'YAW', sub: 'left → right',
@@ -345,7 +346,9 @@ function migrateLibrary(s) {
   for (const k of ['yaw', 'pitch']) if (s.axes[k] && s.axes[k].outputs && !s.axes[k].outputs.gc) s.axes[k].outputs.gc = { zones: [] };
   if (s.names.gc === undefined) s.names.gc = '';
   s.gcSim = !!s.gcSim;
-  s.vertPitch = !!s.vertPitch;
+  s.vertPitch = !!(s.vertPitch || s.centerView); delete s.centerView;
+  if (s.pitchCentered === undefined) s.pitchCentered = !s.pitchRight;   /* v1.31 had the switch the other way round */
+  delete s.pitchRight; s.pitchCentered = !!s.pitchCentered;
   for (const l of s.setlists) for (const sl of l.slots) if (sl.gc === undefined) sl.gc = null;
   if (!s.analogMirrored) {
     for (const sl of s.setlists.flatMap(l => l.slots)) {
@@ -642,7 +645,7 @@ function buildPanels() {
   const lib = main.querySelector('.librarian');
   if (lib) document.querySelector('.lib-outer').appendChild(lib);   /* keep it while the strips rebuild */
   main.innerHTML = '';
-  main.classList.toggle('vert', !!state.vertPitch);   /* upright PITCH: to the right of YAW */
+  main.classList.toggle('vert', !!state.vertPitch);   /* upright PITCH centred under YAW */
   placeLibrarian();
   /* PITCH above YAW on every tab, like the unit's own screens (v1.20) */
   for (const key of ['pitch', 'yaw']) {
@@ -727,58 +730,79 @@ function gcGutter(axis) {
    usual (travel along x, value along y) and then turned as a whole:
    (x, y) → (H − y, W − x), so heel is at the bottom, toe at the top and
    the value runs left → right. Labels and chips are re-placed upright. */
-const isVert = axis => axis.key === 'pitch' && !!state.vertPitch;
-let vertYawExtra = 0;   /* what YAW's strip adds (or gives up) so YAW + Library end level with PITCH */
-let matching = false;
-const VERT_GAP = 20;    /* main's grid gap */
-/* upright view: the Library sits under YAW, and YAW's strip is sized so the
-   two together are as tall as PITCH. If that would squash YAW, the Library's
-   lists give up rows instead. */
-const PHI = 1.618;
-const VERT_ROWS = 4;      /* the Library's lists show exactly this many rows upright (3 on a phone) */
-let vertTravel = null;    /* PITCH's travel length, derived so the golden heights leave room for those rows */
-/* on a phone the upright view is YAW across the top, then Library | PITCH side by side */
+/* the upright view: YAW across the top, the PITCH strip drawn upright and
+   centred under it; the Library beside PITCH when the side column has room */
+const upright = () => !!state.vertPitch;
+const isVert = axis => axis.key === 'pitch' && upright();
 const vertPhone = () => window.matchMedia('(max-width: 760px)').matches;
-function matchVertHeights() {
-  if (!state.vertPitch || matching || !editors.yaw || !editors.pitch) return;
-  const yp = editors.yaw.svg.closest('.axis-panel'), pp = editors.pitch.svg.closest('.axis-panel');
-  const lib = document.getElementById('axes').querySelector('.librarian');
-  if (!yp || !pp || !lib) return;
-  matching = true;
-  const phone = vertPhone();
-  /* 1. the Library: lists exactly VERT_ROWS rows tall */
-  const rows = phone ? 3 : VERT_ROWS;
-  const lists = lib.querySelectorAll('.lib-list');
-  const row = lib.querySelector('.lib-row, .set-row');
-  const rowH = row ? row.offsetHeight : 31;
-  const L = rows * rowH + (rows - 1) * 6 + 14;   /* rows, gaps, padding + border */
-  lists.forEach(l => { l.style.height = L + 'px'; l.style.maxHeight = L + 'px'; l.style.minHeight = '0'; });
-  /* 2. PITCH: desktop — YAW : Library = φ : 1 and YAW + Library = PITCH, so
-        PITCH is (1 + φ) × Library tall; phone — PITCH sits beside the
-        Library and matches its height. Its travel length follows. */
-  const libH = lib.offsetHeight;
-  const pitchTarget = phone ? libH : Math.round(libH * (1 + PHI)) + VERT_GAP;
-  const pg = axisGeom(state.axes.pitch);
-  const pitchChrome = pp.offsetHeight - pg.w;          /* header, padding: everything but the drawing */
-  const travelNow = pg.x1 - pg.x0;
-  const travelWant = pitchTarget - pitchChrome - (pg.w - travelNow);
-  if (Math.abs(travelWant - travelNow) >= 2) { vertTravel = Math.max(160, Math.round(travelWant)); render(state.axes.pitch); }
-  /* 3. YAW takes the rest (desktop); on a phone it keeps its normal height */
-  const diff = phone ? -vertYawExtra : (pp.offsetHeight - VERT_GAP - lib.offsetHeight) - yp.offsetHeight;
-  if (Math.abs(diff) >= 2) { vertYawExtra += diff; render(state.axes.yaw); }
-  matching = false;
-}
+/* the sub-mode: PITCH to the right of YAW (full height) instead of centred under it */
+const rightMode = () => upright() && !state.pitchCentered && !vertPhone();
+const VERT_GAP = 20;    /* main's grid gap */
+let libSide = false;    /* the Library sits beside PITCH (else below it) */
+const libNarrow = () => upright() && libSide;
 /* the Library section moves under YAW in the upright view and back after */
 function placeLibrarian() {
   const main = document.getElementById('axes'), outer = document.querySelector('.lib-outer'), lib = document.querySelector('.librarian');
-  if (state.vertPitch) { if (lib.parentElement !== main) main.appendChild(lib); outer.classList.add('moved'); }
-  else {
+  if (upright()) {
+    if (lib.parentElement !== main) main.appendChild(lib);
+    outer.classList.add('moved');
+    main.classList.toggle('right', rightMode());
+    if (rightMode()) {
+      /* the Library has YAW's whole column under it: both lists side by side */
+      libSide = true;
+      main.classList.remove('lib-below'); lib.classList.remove('lib-stack');
+    } else {
+      const pitchW = parseFloat(getComputedStyle(main).getPropertyValue('--pitch-w')) || 360;
+      const side = (main.clientWidth - pitchW - 2 * VERT_GAP) / 2;
+      libSide = side >= 300;
+      main.classList.toggle('lib-below', !libSide);
+      lib.classList.toggle('lib-stack', libSide && side < 560);   /* one list above the other */
+    }
+  } else {
+    main.classList.remove('right');
+    main.classList.remove('lib-below'); lib.classList.remove('lib-stack'); libSide = false;
     if (lib.parentElement !== outer) outer.appendChild(lib);
     outer.classList.remove('moved');
-    lib.querySelectorAll('.lib-list').forEach(l => { l.style.maxHeight = ''; l.style.height = ''; l.style.minHeight = ''; });
+    lib.querySelectorAll('.lib-list').forEach(l => { l.style.height = ''; l.style.maxHeight = ''; l.style.minHeight = ''; });
+    main.style.removeProperty('--pitch-w');
   }
 }
-const VERT_TRAVEL = 440;   /* the strip's height when upright (travel length) */
+const VERT_TRAVEL = 880;   /* the strip's travel length upright when nothing else sets it */
+const VERT_ROWS = 4;       /* the Library's lists show exactly this many rows upright */
+let vertTravel = null;     /* the travel length that makes PITCH as tall as the Library */
+let matching = false;
+/* the upright view's proportions: PITCH as wide as YAW is tall; the Library's
+   lists four rows each; PITCH as tall as the Library when it sits beside it */
+function layoutVert() {
+  if (!upright() || matching || !editors.yaw || !editors.pitch) return;
+  const main = document.getElementById('axes');
+  const yp = editors.yaw.svg.closest('.axis-panel'), pp = editors.pitch.svg.closest('.axis-panel');
+  const lib = main.querySelector('.librarian');
+  if (!yp || !pp || !lib) return;
+  matching = true;
+  const cs = getComputedStyle(main);
+  const inner = main.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 2 * (parseFloat(cs.columnGap) || VERT_GAP);
+  const pw = Math.max(200, Math.min(yp.offsetHeight, inner));
+  main.style.setProperty('--pitch-w', pw + 'px');
+  placeLibrarian();                                   /* beside or below, given that width */
+  const lists = lib.querySelectorAll('.lib-list');
+  const pg = axisGeom(state.axes.pitch), travelNow = pg.x1 - pg.x0;
+  if (libSide) {
+    const rows = [...lib.querySelectorAll('.lib-row, .set-row')];
+    const rowH = rows.length ? Math.max(...rows.map(r => r.offsetHeight)) : 31;
+    const L = VERT_ROWS * rowH + (VERT_ROWS - 1) * 6 + 14;   /* rows, gaps, padding + border */
+    lists.forEach(l => { l.style.height = L + 'px'; l.style.maxHeight = L + 'px'; l.style.minHeight = '0'; });
+    const chrome = pp.offsetHeight - pg.w;              /* header, padding: everything but the drawing */
+    /* centred: as tall as the Library · on the right: as tall as YAW + Library */
+    const target = rightMode() ? yp.offsetHeight + VERT_GAP + lib.offsetHeight : lib.offsetHeight;
+    const want = target - chrome - (pg.w - travelNow);
+    if (Math.abs(want - travelNow) >= 2) { vertTravel = Math.max(200, Math.round(want)); render(state.axes.pitch); }
+  } else {
+    lists.forEach(l => { l.style.height = ''; l.style.maxHeight = ''; l.style.minHeight = ''; });
+    if (vertTravel !== null) { vertTravel = null; render(state.axes.pitch); }
+  }
+  matching = false;
+}
 /* upright, the chips sit in rows above the strip: pack their widths into the panel */
 function packChips(chips, avail) {
   let row = 0, x = 8;
@@ -802,7 +826,7 @@ function axisGeom(axis) {
        laid-out frame is the right margin past x1 */
     const pack = packChips(chipLayout(axis, { tx: t => t }).chips, wide - 16);
     const right = 12 + pack.rows * GEO.chipRow + 6;
-    const w = (vertTravel || Math.round(VERT_TRAVEL * (isGC() ? 1.2 : 1))) + x0 + right;
+    const w = (vertTravel || VERT_TRAVEL) + x0 + right;
     const x1 = w - right, h = wide;
     const y0 = 12, y1 = h - GEO.bottom;
     return {
@@ -818,11 +842,8 @@ function axisGeom(axis) {
   /* chip rows decide how tall the header band is */
   const probe = chipLayout(axis, { tx });
   const top = 12 + probe.rows * GEO.chipRow + 4 + (isGC() ? 10 : 0);   /* room for the parameter name over the value axis */
-  /* the Ground Control strips are half again as tall: the curve IS the sweep there;
-     beside an upright PITCH, YAW grows to the same panel height */
-  const h = state.vertPitch && axis.key === 'yaw' && !vertPhone()
-    ? Math.round(VERT_TRAVEL * (isGC() ? 1.2 : 1)) + GEO.left + 18 + vertYawExtra
-    : Math.round(GEO.height * (isGC() ? 1.5 : 1)) + (probe.rows - 1) * GEO.chipRow;
+  /* the Ground Control strips are half again as tall: the curve IS the sweep there */
+  const h = Math.round(GEO.height * (isGC() ? 1.5 : 1)) + (probe.rows - 1) * GEO.chipRow;
   const y0 = top, y1 = h - GEO.bottom;
   return {
     w, h, x0, x1, y0, y1, tx, vert,
@@ -1021,7 +1042,7 @@ function render(axis) {
   }
   const text = outs.length ? outs.join(' · ') : (idle.length ? idle.join(' · ') : 'DEAD');
   ed.outEl.textContent = text + (analog && axis.outputs.analog.invert ? '  ⇅' : '');
-  matchVertHeights();
+  if (axis.key === 'yaw') layoutVert();
 }
 
 /* after the upright turn, put every label and chip back on its feet at the
@@ -1673,6 +1694,7 @@ function refreshEditor() {
   }
   updateSaveButtons();
   renderLibrarian();
+  layoutVert();
 }
 /* load a Set List slot: every output that has a file (the pedal's PC behavior) */
 function loadSlot(i) {
@@ -1686,7 +1708,7 @@ function loadSlot(i) {
 /* the Library column on the GROUND CONTROL tab: the unit's Setup bank */
 function renderGcLibrarian() {
   const on = GCTab.isConnected(), bank = GCTab.bank(), active = GCTab.activeId();
-  libTitleEl.textContent = state.vertPitch ? 'LIBRARY · GC' : 'LIBRARY OF SETUPS · GROUND CONTROL';   /* the upright view's column is narrow */
+  libTitleEl.textContent = libNarrow() ? 'LIBRARY · GC' : 'LIBRARY OF SETUPS · GROUND CONTROL';   /* the upright views' column is narrow */
   libListEl.classList.toggle('gc-bank', bank.length > 0);   /* two columns: the bank is long */
   libListEl.innerHTML = bank.length
     ? bank.map(i => {
@@ -1721,7 +1743,7 @@ function renderLibrarian() {
   if (isGC()) { renderGcLibrarian(); return; }
   libListEl.classList.remove('gc-bank');
   const tab = state.tab;
-  libTitleEl.textContent = `${state.vertPitch ? 'LIBRARY' : 'LIBRARY OF SETUPS'} · ${tab === 'analog' ? 'ANALOG' : 'MIDI'}`;
+  libTitleEl.textContent = `${libNarrow() ? 'LIBRARY' : 'LIBRARY OF SETUPS'} · ${tab === 'analog' ? 'ANALOG' : 'MIDI'}`;
   libListEl.innerHTML = lib().length
     ? lib().map(f => `
       <li class="lib-row${f.id === state.loaded[tab] ? ' on' : ''}" data-id="${f.id}">
@@ -1742,7 +1764,7 @@ function renderLibrarian() {
     }).join('')
     : `<li class="lib-empty">drag Setups here — order sets the PC #</li>`;
   progNum.value = loadedPC() ?? '—';
-  matchVertHeights();
+  layoutVert();
 }
 
 /* ── Set List tools: one dropdown, + new, edit (dialog) ──────────── */
@@ -2277,12 +2299,23 @@ function updateOutTabs() {
 }
 const vertToggle = document.getElementById('vertToggle');
 vertToggle.checked = !!state.vertPitch;
+const centerToggle = document.getElementById('centerToggle'), centerLabel = document.getElementById('centerLabel');
+centerToggle.checked = !!state.pitchCentered;
+centerLabel.hidden = !state.vertPitch;
 vertToggle.addEventListener('change', () => {
   state.vertPitch = vertToggle.checked;
-  vertYawExtra = 0; vertTravel = null;
+  centerLabel.hidden = !state.vertPitch;   /* the sub-mode only means something upright */
+  vertTravel = null;
   saveState();
   closePopover();
   refreshEditor();   /* the layout changes: both strips re-measure */
+});
+centerToggle.addEventListener('change', () => {
+  state.pitchCentered = centerToggle.checked;
+  vertTravel = null;
+  saveState();
+  closePopover();
+  refreshEditor();
 });
 const gcSimToggle = document.getElementById('gcSimToggle');
 gcSimToggle.checked = !!state.gcSim;
@@ -2331,7 +2364,8 @@ let resizeTimer = null;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
-    if (state.vertPitch) { vertYawExtra = 0; vertTravel = null; }
+    if (upright()) vertTravel = null;
     for (const key of ['yaw', 'pitch']) render(state.axes[key]);
+    layoutVert();
   }, 80);
 });
