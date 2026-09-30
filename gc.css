@@ -195,6 +195,7 @@ body.gc-tab #progName, body.gc-tab .lib-name { text-transform: none; }
 }
 
 /* the Orbit pedal panel */
+#pd-status a { color: var(--sim); }
 #pedalTab { display: grid; gap: 20px; padding: 10px 22px 6px; max-width: 1180px; margin: 0 auto; box-sizing: border-box; }
 .pd-settings { display: grid; gap: 12px; margin-top: 10px; }
 .pd-settings[hidden] { display: none; }

@@ -129,15 +129,23 @@
     },
     onDisconnect: reason => {
       setStatus(reason ? `disconnected: ${reason.message}` : 'not connected', reason ? 'err' : '');
+      if (reason && kind === 'websocket') hintOpenByIp();
       info = null; settings = null; renderInfo(); renderSettings(); setConnectedUi(false);
     },
     onFrame, onRawError: err => setStatus(err.message, 'err'),
   };
 
   /* ---- public ------------------------------------------------------------ */
+  /* the OS's captive-portal window can show the page but refuses its socket:
+     point at the pedal by address in a real browser */
+  function hintOpenByIp() {
+    const ip = /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) ? location.hostname : '192.168.4.1';
+    ui.status.innerHTML = `no socket from this window — open <a href="http://${ip}/" target="_blank" rel="noopener">http://${ip}/</a> in Safari or Chrome`;
+    ui.status.className = 'gc-status err';
+  }
   async function connect() {
     if (!link) return;
-    try { await link.connect(); } catch (err) { setStatus(err.message, 'err'); }
+    try { await link.connect(); } catch (err) { setStatus(err.message, 'err'); if (kind === 'websocket') hintOpenByIp(); }
   }
   function init(opts) {
     hooks = opts || {};
