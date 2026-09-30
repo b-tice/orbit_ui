@@ -843,6 +843,7 @@
   /* ---- frames in ----------------------------------------------------- */
   function onFrame(f) {
     if (f.cmd === R.PONG && lastPingAt) { log('rx', `${describeFrame(f)}  (RTT ${(performance.now() - lastPingAt).toFixed(1)} ms)`); lastPingAt = 0; return; }
+    if (f.cmd === R.PONG) return;   /* the tunnel's keepalive: not worth a log line */
     if (f.cmd === R.LIVE_VAL) { handleLiveVal(f.payload); return; }
     if (f.cmd === R.AXIS_RAW) { handleAxisRaw(f.payload); return; }
     if (f.cmd === R.PRESET_INFO) { handlePresetInfo(f.payload); return; }

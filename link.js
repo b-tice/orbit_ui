@@ -141,9 +141,12 @@
       this.up = true; this.parser = new G.FrameParser();
       this.offRaw = P.onRaw(f => { if (f.cmd === P.TUNNEL_REPLY) for (const g of this.parser.feed(f.payload)) this.ev.onFrame(g); });
       this.offGc = P.onGc(gc => { if (!gc.present && this.up) this.drop(new Error('Ground Control went away')); });
+      /* the unit relays its own changes (a Setup picked on its buttons) through
+         the tunnel only while the app has spoken in the last 10 s: keep it open */
+      this.keepalive = setInterval(() => { if (this.up) this.send(G.frames.ping()).catch(() => {}); }, 4000);
       this.ev.onConnect();
     }
-    drop(err) { this.up = false; if (this.offRaw) this.offRaw(); if (this.offGc) this.offGc(); this.offRaw = this.offGc = null; this.ev.onDisconnect(err); }
+    drop(err) { this.up = false; clearInterval(this.keepalive); if (this.offRaw) this.offRaw(); if (this.offGc) this.offGc(); this.offRaw = this.offGc = null; this.ev.onDisconnect(err); }
     async disconnect() { if (this.up) this.drop(); }
     async send(bytes) {
       if (!this.up) throw new Error('not connected');
