@@ -210,9 +210,15 @@ WiFi on at next power-up) with **apply** (live) and **save to pedal**
 (flash). While connected, the pedal's live position drives the ▲ markers on
 every tab and the header LED turns teal.
 
-Served by the pedal, the Ground Control tab is offered only as the simulated
-unit until the SysEx tunnel (stage 3.2) exists — the pedal's socket carries
-the pedal's own frames.
+**Ground Control through the pedal (v1.34, firmware stage 3.2).** With a
+tunnel-capable Ground Control hosting the pedal, its HELLO reaches the app
+as the pedal's GC_STATUS, the GROUND CONTROL tab appears and connects
+"through the pedal": every Ground Control frame is wrapped in the pedal's
+GC_TUNNEL command, packed into SysEx down the USB-MIDI cable, and replies
+come back the same way. The bank is read at once on connect; the unit's
+screens follow the pedal's own axis stream. A Ground Control on older
+firmware still hosts the pedal but shows no tab, and the pedal panel says
+its firmware predates the tunnel.
 
 ## Interactions
 
