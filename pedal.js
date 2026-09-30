@@ -10,12 +10,15 @@
 
 (function () {
   const G = window.GCP;
-  const CMD = { PING: 0x01, GET_SETTINGS: 0x10, SET_SETTINGS: 0x11, SAVE: 0x12, TARE: 0x13, GET_INFO: 0x14 };
-  const RSP = { PONG: 0x81, AXIS: 0x82, SETTINGS: 0x90, SAVED: 0x91, TARED: 0x92, INFO: 0x93 };
+  const CMD = { PING: 0x01, GET_SETTINGS: 0x10, SET_SETTINGS: 0x11, SAVE: 0x12, TARE: 0x13, GET_INFO: 0x14, GC_TUNNEL: 0x20, GC_STATUS: 0x21 };
+  const RSP = { PONG: 0x81, AXIS: 0x82, SETTINGS: 0x90, SAVED: 0x91, TARED: 0x92, INFO: 0x93, GC_TUNNEL: 0xa0, GC_STATUS: 0xa1 };
   const BLOB_VERSION = 1, BLOB_LEN = 15;
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   let hooks = {}, ui = {}, link = null, kind = null, info = null, settings = null, dirty = false, lastAxisMs = 0, lastPingAt = 0;
+  /* Ground Control behind the pedal (protocol v2 HELLO relayed as GC_STATUS) */
+  let gc = { present: false, fw: '', caps: 0, protocol: 0 };
+  const rawTaps = new Set(), gcTaps = new Set();
 
   const decodeSettings = p => (p.length < BLOB_LEN ? null : {
     channel: p[1] & 15, ccPitch: p[2] & 127, ccYaw: p[3] & 127, enPitch: !!p[4], enYaw: !!p[5], invPitch: !!p[6], invYaw: !!p[7],
@@ -75,7 +78,8 @@
   function renderInfo() {
     if (!info) { ui.info.textContent = ''; return; }
     const calib = ['uncalibrated', 'calibrating', 'calibrated'][info.calib] || `calib ${info.calib}`;
-    const parts = [`fw ${info.fw}`, `hw ${info.hwRev}`, info.hosted ? 'on Ground Control' : 'standalone', `IMU ${info.imuOk ? calib : 'missing'}`, info.dacOk ? 'EXP ok' : 'EXP missing'];
+    const host = gc.present ? `on Ground Control ${gc.fw} (tunnel)` : info.hosted ? 'on Ground Control — its firmware predates the tunnel, update it for the GROUND CONTROL tab' : 'standalone';
+    const parts = [`fw ${info.fw}`, `hw ${info.hwRev}`, host, `IMU ${info.imuOk ? calib : 'missing'}`, info.dacOk ? 'EXP ok' : 'EXP missing'];
     ui.info.textContent = parts.join(' · ');
     if (hooks.onInfo) hooks.onInfo(info);
   }
@@ -110,6 +114,16 @@
   /* ---- frames ------------------------------------------------------------ */
   function onFrame(f) {
     const p = f.payload;
+    for (const t of rawTaps) t(f);
+    if (f.cmd === RSP.GC_STATUS) {
+      if (p.length >= 6) {
+        const was = gc.present;
+        gc = { present: !!p[0], fw: `${p[1]}.${p[2]}.${p[3]}`, caps: p[4], protocol: p[5] };
+        renderInfo();
+        if (was !== gc.present) for (const t of gcTaps) t(gc);
+      }
+      return;
+    }
     if (f.cmd === RSP.AXIS) {
       if (p.length < 4) return;
       lastAxisMs = performance.now();
@@ -125,12 +139,13 @@
   const events = {
     onConnect: () => {
       setStatus('connected', 'ok'); setConnectedUi(true);
-      tx(CMD.GET_INFO); setTimeout(() => tx(CMD.GET_SETTINGS), 80);
+      tx(CMD.GET_INFO); setTimeout(() => tx(CMD.GET_SETTINGS), 80); setTimeout(() => tx(CMD.GC_STATUS), 160);
     },
     onDisconnect: reason => {
       setStatus(reason ? `disconnected: ${reason.message}` : 'not connected', reason ? 'err' : '');
       if (reason && kind === 'websocket') hintOpenByIp();
       info = null; settings = null; renderInfo(); renderSettings(); setConnectedUi(false);
+      if (gc.present) { gc = { present: false, fw: '', caps: 0, protocol: 0 }; for (const t of gcTaps) t(gc); }
     },
     onFrame, onRawError: err => setStatus(err.message, 'err'),
   };
@@ -168,5 +183,14 @@
     setConnectedUi(false);
     if (kind === 'websocket') setTimeout(connect, 50);   /* served by the pedal: its socket is right here */
   }
-  window.Pedal = { init, connect, isConnected: connected, info: () => info, kind: () => kind, live: () => performance.now() - lastAxisMs < 600 };
+  window.Pedal = {
+    init, connect, isConnected: connected, info: () => info, kind: () => kind, live: () => performance.now() - lastAxisMs < 600,
+    /* the tunnel's hooks: every raw pedal frame, the Ground Control envelope, presence */
+    onRaw: cb => { rawTaps.add(cb); return () => rawTaps.delete(cb); },
+    onGc: cb => { gcTaps.add(cb); return () => gcTaps.delete(cb); },
+    gc: () => gc,
+    sendTunnel: frame => { if (!connected()) return Promise.reject(new Error('the pedal is not connected')); return link.send(G.encodeFrame(CMD.GC_TUNNEL, frame)); },
+    askGcStatus: () => tx(CMD.GC_STATUS),
+    TUNNEL_REPLY: RSP.GC_TUNNEL,
+  };
 })();

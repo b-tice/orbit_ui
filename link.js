@@ -126,12 +126,38 @@
     }
   }
 
+  /* ---- through the pedal (protocol v2 tunnel) ---------------------------
+     Ground Control frames ride the pedal's own link (WebSocket or USB) wrapped
+     in the pedal's GC_TUNNEL command; the pedal packs them into SysEx down the
+     USB-MIDI cable, and unwraps replies into GC_TUNNEL replies. Presence comes
+     from Ground Control's HELLO, relayed by the pedal. */
+  class TunnelLink {
+    constructor(events) { this.ev = events; this.up = false; this.parser = new G.FrameParser(); this.offRaw = null; this.offGc = null; }
+    isConnected() { return this.up; }
+    async connect() {
+      const P = window.Pedal;
+      if (!P || !P.isConnected()) throw new Error('connect to the pedal first');
+      if (!P.gc().present) { P.askGcStatus(); throw new Error('no tunnel-capable Ground Control on the pedal'); }
+      this.up = true; this.parser = new G.FrameParser();
+      this.offRaw = P.onRaw(f => { if (f.cmd === P.TUNNEL_REPLY) for (const g of this.parser.feed(f.payload)) this.ev.onFrame(g); });
+      this.offGc = P.onGc(gc => { if (!gc.present && this.up) this.drop(new Error('Ground Control went away')); });
+      this.ev.onConnect();
+    }
+    drop(err) { this.up = false; if (this.offRaw) this.offRaw(); if (this.offGc) this.offGc(); this.offRaw = this.offGc = null; this.ev.onDisconnect(err); }
+    async disconnect() { if (this.up) this.drop(); }
+    async send(bytes) {
+      if (!this.up) throw new Error('not connected');
+      await window.Pedal.sendTunnel(bytes);
+    }
+  }
+
   function createLink(kind, events, opts) {
     if (kind === 'websocket') return new WsLink(events);
     if (kind === 'serial') return new SerialLink(events);
+    if (kind === 'tunnel') return new TunnelLink(events);
     return window.GCSim.create(events, opts || {});
   }
-  const LINK_LABELS = { sim: 'simulated Ground Control', websocket: `WiFi · ${location.host}`, serial: 'USB' };
+  const LINK_LABELS = { sim: 'simulated Ground Control', websocket: `WiFi · ${location.host}`, serial: 'USB', tunnel: 'through the pedal' };
 
-  window.GCLink = { servedByPedal, pickLinkKind, WsLink, SerialLink, createLink, LINK_LABELS };
+  window.GCLink = { servedByPedal, pickLinkKind, WsLink, SerialLink, TunnelLink, createLink, LINK_LABELS };
 })();

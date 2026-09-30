@@ -881,7 +881,10 @@
       log('info', `link up · ${window.GCLink.LINK_LABELS[linkKind]}`);
       /* the unit pushes its curves and live state a beat after connect; the
          bank is read on request (a whole-bank burst browned out the real AP) */
-      if (linkKind === 'sim') setTimeout(refreshBank, 200);
+      /* the simulator and the tunnel read the bank at once (the unit's radio is
+         not involved there); over the unit's own WiFi the burst once browned it
+         out, so that path still waits for a manual refresh */
+      if (linkKind === 'sim' || linkKind === 'tunnel') setTimeout(refreshBank, 200);
       else setTimeout(() => { if (connected()) resendCurves(); }, 800);
     },
     onDisconnect: reason => {
@@ -902,11 +905,20 @@
 
   /* ---- link selection ------------------------------------------------ */
   function availableKinds() {
-    /* served by the pedal, the socket is the PEDAL's; Ground Control frames
-       will ride a tunnel through it (stage 3.2) — not offered until then */
-    const k = ['sim'];
+    /* through the pedal (the tunnel) first when a Ground Control is behind
+       it; the pedal's socket itself is the pedal's, never a Ground Control's */
+    const k = [];
+    if (window.Pedal && window.Pedal.gc().present) k.push('tunnel');
+    k.push('sim');
     if ('serial' in navigator) k.push('serial');
     return k;
+  }
+  /* the pedal's own axis stream (the tunnel never carries AXIS_RAW) */
+  function feedAxis(pitch01, yaw01) {
+    if (linkKind !== 'tunnel' || !connected()) return;
+    axisRaw01[0] = pitch01; axisRaw01[1] = yaw01;
+    axisRawAtMs = performance.now();
+    if (activePreset) renderScreens();
   }
   function setLinkKind(kind) {
     if (link && link.isConnected()) return;
@@ -1049,7 +1061,8 @@
     bank, active: () => activePreset, activeId: () => (activeSlot ? G.slotLabel(activeSlot.letter, activeSlot.digit) : null),
     load, rename, renameSlot, save, saveNew, remove, refreshBank, nameOf, describe, idOf, parseId, log,
     simulator: () => sim, listing: () => listInProgress,
-    applyAxis, decompile, dirty: () => editorDirty, paramDef,
+    applyAxis, decompile, dirty: () => editorDirty, paramDef, feedAxis, availableKinds,
+    refreshLinkChoices: () => { const labels = window.GCLink.LINK_LABELS; ui.linkSel.innerHTML = availableKinds().map(k => `<option value="${k}">${esc(labels[k])}</option>`).join(''); ui.linkSel.value = linkKind; },
     dumpBank, restoreBank, unitLabel: () => window.GCLink.LINK_LABELS[linkKind], setBankStatus,
     pickParam: (eff, par) => pickParam(eff, par, false),
   };
