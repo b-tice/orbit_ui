@@ -58,8 +58,8 @@
         <button class="ghostbtn" id="pd-tare" type="button" disabled title="take the pedal's current pose as its zero">tare</button>
         <button class="ghostbtn" id="pd-ping" type="button" disabled>ping</button>
         <span class="gc-status" id="pd-info"></span>
-        <code class="gc-status" id="pd-diag" style="display:block;font-size:.72rem;opacity:.8;white-space:pre-wrap"></code>
       </div>
+      <div id="pd-diag" style="font-family:var(--mono);font-size:13px;line-height:1.4;color:var(--ink);white-space:pre-wrap;word-break:break-all;padding:4px 0 2px"></div>
       <div class="pd-settings" id="pd-settings" hidden>
         <div class="gc-help">These apply when the pedal is plugged straight into a computer (DAW mode). Docked on Ground Control it always speaks the fixed link protocol, so nothing here can break that.</div>
         <div class="pd-grid">
