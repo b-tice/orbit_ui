@@ -10,12 +10,14 @@
 
 (function () {
   const G = window.GCP;
-  const CMD = { PING: 0x01, GET_SETTINGS: 0x10, SET_SETTINGS: 0x11, SAVE: 0x12, TARE: 0x13, GET_INFO: 0x14, GC_TUNNEL: 0x20, GC_STATUS: 0x21 };
-  const RSP = { PONG: 0x81, AXIS: 0x82, SETTINGS: 0x90, SAVED: 0x91, TARED: 0x92, INFO: 0x93, GC_TUNNEL: 0xa0, GC_STATUS: 0xa1 };
+  const CMD = { PING: 0x01, GET_SETTINGS: 0x10, SET_SETTINGS: 0x11, SAVE: 0x12, TARE: 0x13, GET_INFO: 0x14, GC_TUNNEL: 0x20, GC_STATUS: 0x21, DIAG: 0x22 };
+  const RSP = { PONG: 0x81, AXIS: 0x82, SETTINGS: 0x90, SAVED: 0x91, TARED: 0x92, INFO: 0x93, GC_TUNNEL: 0xa0, GC_STATUS: 0xa1, DIAG: 0xa2 };
   const BLOB_VERSION = 1, BLOB_LEN = 15;
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   let hooks = {}, ui = {}, link = null, kind = null, info = null, settings = null, dirty = false, lastAxisMs = 0, lastPingAt = 0;
+  /* bench readout: the pedal answers DIAG from its network task, so it still speaks when its main loop has stalled */
+  let diagTimer = null, diagText = '', diagAt = 0;
   /* Ground Control behind the pedal (protocol v2 HELLO relayed as GC_STATUS) */
   let gc = { present: false, fw: '', caps: 0, protocol: 0 };
   const rawTaps = new Set(), gcTaps = new Set();
@@ -56,6 +58,7 @@
         <button class="ghostbtn" id="pd-tare" type="button" disabled title="take the pedal's current pose as its zero">tare</button>
         <button class="ghostbtn" id="pd-ping" type="button" disabled>ping</button>
         <span class="gc-status" id="pd-info"></span>
+        <code class="gc-status" id="pd-diag" style="display:block;font-size:.72rem;opacity:.8;white-space:pre-wrap"></code>
       </div>
       <div class="pd-settings" id="pd-settings" hidden>
         <div class="gc-help">These apply when the pedal is plugged straight into a computer (DAW mode). Docked on Ground Control it always speaks the fixed link protocol, so nothing here can break that.</div>
@@ -102,6 +105,11 @@
     if (s.outMaxYaw <= s.outMinYaw) s.outMaxYaw = Math.min(127, s.outMinYaw + 1);
     return s;
   }
+  function renderDiag() {
+    if (!ui.diag) return;
+    const age = diagAt ? (performance.now() - diagAt) / 1000 : 0;
+    ui.diag.textContent = diagText ? (age > 5 ? `${diagText}  (no answer for ${age.toFixed(0)} s)` : diagText) : '';
+  }
   function setDirty(d) { dirty = d; ui.apply.classList.toggle('on', d); ui.apply.disabled = !connected() || !d; }
   function setConnectedUi(on) {
     ui.connect.disabled = on || kind === 'websocket'; ui.disconnect.disabled = !on || kind === 'websocket';
@@ -130,6 +138,7 @@
       if (hooks.onAxis) hooks.onAxis(G.bytesToU16(p, 0) / 16383, G.bytesToU16(p, 2) / 16383);
       return;
     }
+    if (f.cmd === RSP.DIAG) { diagText = new TextDecoder().decode(p); diagAt = performance.now(); renderDiag(); return; }
     if (f.cmd === RSP.PONG) { if (lastPingAt) { ui.note.textContent = `pong · ${(performance.now() - lastPingAt).toFixed(1)} ms`; lastPingAt = 0; } return; }
     if (f.cmd === RSP.INFO) { info = decodeInfo(p); renderInfo(); return; }
     if (f.cmd === RSP.SETTINGS) { settings = decodeSettings(p); renderSettings(); ui.note.textContent = 'settings from the pedal'; return; }
@@ -140,10 +149,12 @@
     onConnect: () => {
       setStatus('connected', 'ok'); setConnectedUi(true);
       tx(CMD.GET_INFO); setTimeout(() => tx(CMD.GET_SETTINGS), 80); setTimeout(() => tx(CMD.GC_STATUS), 160);
+      clearInterval(diagTimer); diagTimer = setInterval(() => { tx(CMD.DIAG); renderDiag(); }, 2000);
     },
     onDisconnect: reason => {
       setStatus(reason ? `disconnected: ${reason.message}` : 'not connected', reason ? 'err' : '');
       if (reason && kind === 'websocket') hintOpenByIp();
+      clearInterval(diagTimer); diagTimer = null;
       info = null; settings = null; renderInfo(); renderSettings(); setConnectedUi(false);
       if (gc.present) { gc = { present: false, fw: '', caps: 0, protocol: 0 }; for (const t of gcTaps) t(gc); }
     },
@@ -167,7 +178,7 @@
     const mount = hooks.mount;
     mount.innerHTML = template();
     const $ = id => mount.querySelector('#' + id);
-    ui = { status: $('pd-status'), info: $('pd-info'), note: $('pd-note'), connect: $('pd-connect'), disconnect: $('pd-disconnect'), tare: $('pd-tare'), ping: $('pd-ping'),
+    ui = { status: $('pd-status'), info: $('pd-info'), diag: $('pd-diag'), note: $('pd-note'), connect: $('pd-connect'), disconnect: $('pd-disconnect'), tare: $('pd-tare'), ping: $('pd-ping'),
       settings: $('pd-settings'), apply: $('pd-apply'), save: $('pd-save') };
     kind = window.GCLink.servedByPedal() ? 'websocket' : ('serial' in navigator ? 'serial' : null);
     if (kind) link = window.GCLink.createLink(kind, events);
