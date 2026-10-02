@@ -7,7 +7,7 @@
 
 (function () {
   const FRAME_START = 0xaa;
-  const MAX_PAYLOAD = 64;
+  const MAX_PAYLOAD = 160;   /* the pedal's bridge bound: a tunnelled Ground Control frame is up to 68 bytes, its bench readout ~120; the unit's own frames stay ≤ 64 */
 
   /* ---- command / reply ids (must match gc_ui bridge.cpp) ------------- */
   const CMD = {
