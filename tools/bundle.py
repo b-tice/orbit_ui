@@ -20,6 +20,7 @@ FILES = [  # (route, source, mime)
     ('/gc.css',          'gc.css',          'text/css'),
     ('/ambient.css',     'ambient.css',     'text/css'),
     ('/link.js',         'link.js',         'application/javascript'),
+    ('/program.js',      'program.js',      'application/javascript'),
     ('/gc/protocol.js',  'gc/protocol.js',  'application/javascript'),
     ('/gc/effects.js',   'gc/effects.js',   'application/javascript'),
     ('/gc/curve.js',     'gc/curve.js',     'application/javascript'),
