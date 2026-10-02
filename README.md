@@ -197,8 +197,10 @@ simulator so far — they are the spec for the firmware:
 route per file, Ambient CSS trimmed to the rules the page uses, the Google
 Fonts link dropped (the pedal's WiFi has no internet; Michroma falls back to
 the system sans). About 85 KB gzipped. The Orbit firmware on the
-`orbit-s3-port-gctab` branch serves it from its access point (Orbit-XXXX,
-captive portal), with an OTA form at `/update`.
+`orbit-s3-port-gctab` branch serves it from its access point (Orbit-XXXX;
+join it, then open http://192.168.4.1/ in a real browser — there is no
+captive portal, the pedal answers the OS's connectivity probes as "online"
+so no sandboxed join-window appears), with an OTA form at `/update`.
 
 The **ORBIT PEDAL** panel (`pedal.js`) is the pedal's settings editor,
 replacing the pedal's old settings page: it connects over the pedal's own
