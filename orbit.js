@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.38';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.39';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -1097,6 +1097,7 @@ function commit(axis) {
   render(axis);
   saveState();
   if (isGC()) scheduleGcCompile(axis);
+  else OrbitProgram.schedule(state, false);   /* the pedal follows every edit (RAM) */
   updateSaveButtons();
 }
 
@@ -1630,6 +1631,7 @@ function saveProgram(asNew, tab) {
   saveState();
   renderLibrarian();
   updateSaveButtons();
+  OrbitProgram.schedule(state, true);   /* saved here = saved on the pedal */
   return f;
 }
 
@@ -1679,6 +1681,7 @@ function loadFile(id, tab) {
   }
   state.names[tab] = f.name;
   state.loaded[tab] = id;
+  OrbitProgram.schedule(state, true);   /* a Setup load lands on the pedal and sticks across power cycles */
   return true;
 }
 function refreshEditor() {
@@ -2342,8 +2345,12 @@ Pedal.init({
     pedalRenderAt = now;
     for (const key of ['yaw', 'pitch']) if (editors[key]) render(state.axes[key]);
   },
-  onLink: on => { const led = document.getElementById('powerLed'); led.style.setProperty('--amb-led-color', on ? '#2dd4bf' : '#6366f1'); led.title = on ? 'Orbit pedal connected' : ''; },
+  onLink: on => {
+    const led = document.getElementById('powerLed'); led.style.setProperty('--amb-led-color', on ? '#2dd4bf' : '#6366f1'); led.title = on ? 'Orbit pedal connected' : '';
+    if (on) setTimeout(() => OrbitProgram.schedule(state, true), 400);   /* the pedal gets what the app shows, right after its settings */
+  },
 });
+OrbitProgram.init({ onStatus: (text, cls) => Pedal.note(text, cls) });
 /* a Ground Control appears behind the pedal: show the tab and go through the tunnel */
 Pedal.onGc(gc => {
   updateOutTabs();

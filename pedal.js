@@ -201,6 +201,9 @@
     onGc: cb => { gcTaps.add(cb); return () => gcTaps.delete(cb); },
     gc: () => gc,
     sendTunnel: frame => { if (!connected()) return Promise.reject(new Error('the pedal is not connected')); return link.send(G.encodeFrame(CMD.GC_TUNNEL, frame)); },
+    /* any pedal command (the program push, program.js) */
+    send: (cmd, payload) => { if (!connected()) return Promise.reject(new Error('the pedal is not connected')); return link.send(G.encodeFrame(cmd, payload || new Uint8Array(0))); },
+    note: (text, cls) => { ui.note.textContent = text; ui.note.className = 'gc-status' + (cls ? ' ' + cls : ''); },
     askGcStatus: () => tx(CMD.GC_STATUS),
     TUNNEL_REPLY: RSP.GC_TUNNEL,
   };

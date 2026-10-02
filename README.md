@@ -202,6 +202,22 @@ join it, then open http://192.168.4.1/ in a real browser — there is no
 captive portal, the pedal answers the OS's connectivity probes as "online"
 so no sandboxed join-window appears), with an OTA form at `/update`.
 
+**The pedal runs the MIDI and ANALOG OUT tabs itself** (`program.js`,
+`orbit/src/program.{h,cpp}`). Every edit pushes the live program — both
+outputs, both axes, up to 8 zones of 8 points each — to the pedal over the
+bridge (PROG_BEGIN 0x30 / PROG_DATA 0x31 / PROG_END 0x32 → PROG_ACK 0xB0,
+PROG_GET 0x33 streams it back, PROG_CLEAR 0x34 forgets it). Loading or saving
+a Setup also saves it in the pedal's flash, so it survives a power cycle.
+The pedal's engine mirrors the app's rules exactly: masking by Dead, Note and
+Freeze zones, same-channel-and-CC Controllers with the topmost winning, hold
+or reset on exit, note on/off on entry/exit, fast-entry Switch toggles,
+Freeze holding the other axis, and one voltage per jack (an on Switch, else
+the topmost Controller) with the invert flag. Pedal-alone (DAW mode) the MIDI
+goes out the pedal's own USB port; the jacks follow the analog program in
+both modes. Docked on Ground Control the MIDI half is off (the link stays
+raw) until the pass-through step. With no program pushed the pedal falls back
+to the ORBIT PEDAL panel's simple channel / CC / window settings.
+
 The **ORBIT PEDAL** panel (`pedal.js`) is the pedal's settings editor,
 replacing the pedal's old settings page: it connects over the pedal's own
 WebSocket when the page is served by the pedal, or over USB (Web Serial, on
