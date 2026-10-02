@@ -61,7 +61,7 @@
       </div>
       <div id="pd-diag" style="font-family:var(--mono);font-size:13px;line-height:1.4;color:var(--ink);white-space:pre-wrap;word-break:break-all;padding:4px 0 2px"></div>
       <div class="pd-settings" id="pd-settings" hidden>
-        <div class="gc-help">These apply when the pedal is plugged straight into a computer (DAW mode). Docked on Ground Control it always speaks the fixed link protocol, so nothing here can break that.</div>
+        <div class="gc-help">The MIDI tab and the ANALOG OUT tab are the pedal's mapping: the app pushes them to the pedal as you edit. The channel, CC and window fields below are the fallback for a pedal with no program stored, in DAW mode. Docked on Ground Control it always speaks the fixed link protocol, so nothing here can break that.</div>
         <div class="pd-grid">
           <label class="field"><span>TRANSMIT CH</span><select data-f="channel">${Array.from({ length: 16 }, (_, i) => `<option value="${i}">${i + 1}</option>`).join('')}</select></label>
           <label class="polarity"><span class="pol-lbl">tap note</span><input type="checkbox" data-f="tapEnable"><span class="pol-switch"></span></label>
