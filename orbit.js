@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.39';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.40';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -434,6 +434,16 @@ const blockers = (axis, z) => Z(axis).filter(o =>
 /* is Controller zone z actually sending at travel t? */
 const ctlActive = (axis, z, t) =>
   t >= z.lo && t <= z.hi && !blockers(axis, z).some(o => t >= o.lo && t <= o.hi);
+/* the Ground Control link owns CC 20/21/52/53 and note 60 on channel 1: a MIDI
+   zone that sends one of them is silenced by the pedal while docked (shown amber) */
+const LINK_CCS = [20, 21, 52, 53], LINK_NOTE = 60;
+function reservedByLink(z) {
+  if (state.tab !== 'midi' || z.ch !== 1) return false;
+  if (z.type === 'ctl') return LINK_CCS.includes(z.cc);
+  if (z.type === 'note') return z.note === LINK_NOTE;
+  if (z.type === 'switch') return z.action === 'cc' ? LINK_CCS.includes(z.cc) : z.note === LINK_NOTE;
+  return false;
+}
 /* does z share channel+CC with another Controller it overlaps? (shown amber) */
 const ccConflict = (axis, z) => Z(axis).some(o => o !== z && overlaps(o, z) && sameCC(o, z));
 /* the parts of [z.lo,z.hi] where z is silenced, merged & sorted */
@@ -969,9 +979,9 @@ function render(axis) {
   for (const c of chips) {
     const col = colorOf(c.z);
     const y = 6 + c.row * GEO.chipRow;
-    const warn = ccConflict(axis, c.z);   /* amber: shares CH+CC with an overlapping Controller */
+    const warn = ccConflict(axis, c.z) || reservedByLink(c.z);   /* amber: shares CH+CC with an overlapping Controller, or uses a message the Ground Control link owns */
     const selected = isSel(axis, c.z);
-    parts.push(`<g data-role="chip" data-id="${c.z.id}" data-row="${c.row}" style="cursor:pointer">${warn ? `<title>overlaps another Controller on the same channel and CC — the topmost one wins</title>` : ''}
+    parts.push(`<g data-role="chip" data-id="${c.z.id}" data-row="${c.row}" style="cursor:pointer">${warn ? `<title>${reservedByLink(c.z) ? 'channel 1 CC 20/21/52/53 and note 60 belong to the Ground Control link — silenced while docked' : 'overlaps another Controller on the same channel and CC — the topmost one wins'}</title>` : ''}
       <rect x="${c.cx - c.w / 2}" y="${y}" width="${c.w}" height="17" rx="8.5" fill="${warn ? 'var(--warn-fill)' : 'var(--chip-fill)'}" stroke="${selected ? 'var(--sim)' : (warn ? 'var(--warn)' : col.c)}" stroke-opacity="${selected || warn ? 1 : 0.7}" stroke-width="${selected ? 2 : 1}"${selected ? ` filter="url(#glow-sim-${axis.key})"` : ''}/>
       <circle cx="${c.cx - c.w / 2 + 9}" cy="${y + 8.5}" r="3" fill="${col.c}"/>
       <text x="${c.cx + 6}" y="${y + 12}" font-size="8" text-anchor="middle" class="chip-label">${c.label}</text>
@@ -1465,7 +1475,7 @@ function openZonePopover(axis, z, cx, cy) {
       <div class="pop-row"><label>On exit</label>
         <div class="seg" title="what the output does when the pedal leaves this zone"><button class="${z.exit !== 'reset' ? 'on' : ''}" data-exit="hold" type="button">Hold</button><button class="${z.exit === 'reset' ? 'on' : ''}" data-exit="reset" type="button">Reset</button></div></div>
       <div class="pop-note">drag the end points to set the output range · double-click the curve to add points</div>
-      ${ccConflict(axis, z) ? `<div class="pop-note warn">overlaps another controller zone${analog ? '' : ' on the same channel + CC'} — where they overlap only the topmost (narrowest) one sends</div>` : ''}`;
+      ${ccConflict(axis, z) ? `<div class="pop-note warn">overlaps another controller zone${analog ? '' : ' on the same channel + CC'} — where they overlap only the topmost (narrowest) one sends</div>` : ''}${reservedByLink(z) ? `<div class="pop-note warn">channel 1 CC 20 / 21 / 52 / 53 and note 60 belong to the Ground Control link — this zone works with the pedal alone but is silenced while docked</div>` : ''}`;
   } else if (z.type === 'note') {
     rows = `${numRow('Transmit ch', 'zch', z.ch, 1, 16)}
       ${numRow('Note #', 'znote', z.note, 0, 127)}

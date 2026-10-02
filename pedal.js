@@ -81,7 +81,7 @@
   function renderInfo() {
     if (!info) { ui.info.textContent = ''; return; }
     const calib = ['uncalibrated', 'calibrating', 'calibrated'][info.calib] || `calib ${info.calib}`;
-    const host = gc.present ? `on Ground Control ${gc.fw} (tunnel)` : info.hosted ? 'on Ground Control — its firmware predates the tunnel, update it for the GROUND CONTROL tab' : 'standalone';
+    const host = gc.present ? `on Ground Control ${gc.fw} (tunnel${(gc.caps & 2) ? ' · MIDI pass-through' : ''})` : info.hosted ? 'on Ground Control — its firmware predates the tunnel, update it for the GROUND CONTROL tab' : 'standalone';
     const parts = [`fw ${info.fw}`, `hw ${info.hwRev}`, host, `IMU ${info.imuOk ? calib : 'missing'}`, info.dacOk ? 'EXP ok' : 'EXP missing'];
     ui.info.textContent = parts.join(' · ');
     if (hooks.onInfo) hooks.onInfo(info);
