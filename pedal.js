@@ -57,6 +57,7 @@
         <button class="ghostbtn" id="pd-disconnect" type="button" disabled>disconnect</button>
         <button class="ghostbtn" id="pd-tare" type="button" disabled title="take the pedal's current pose as its zero">tare</button>
         <button class="ghostbtn" id="pd-ping" type="button" disabled>ping</button>
+        <button class="ghostbtn" id="pd-restart" type="button" disabled title="bench: restart the pedal (tests the unit's recovery)">restart pedal</button>
         <span class="gc-status" id="pd-info"></span>
       </div>
       <div id="pd-diag" style="font-family:var(--mono);font-size:13px;line-height:1.4;color:var(--ink);white-space:pre-wrap;word-break:break-all;padding:4px 0 2px"></div>
@@ -114,7 +115,7 @@
   function setDirty(d) { dirty = d; ui.apply.classList.toggle('on', d); ui.apply.disabled = !connected() || !d; }
   function setConnectedUi(on) {
     ui.connect.disabled = on || kind === 'websocket'; ui.disconnect.disabled = !on || kind === 'websocket';
-    ui.tare.disabled = !on; ui.ping.disabled = !on; ui.save.disabled = !on;
+    ui.tare.disabled = !on; ui.ping.disabled = !on; ui.save.disabled = !on; if (ui.restart) ui.restart.disabled = !on;
     ui.connect.hidden = kind === 'websocket';
     setDirty(dirty && on);
     if (hooks.onLink) hooks.onLink(on);
@@ -180,7 +181,7 @@
     mount.innerHTML = template();
     const $ = id => mount.querySelector('#' + id);
     ui = { status: $('pd-status'), info: $('pd-info'), diag: $('pd-diag'), note: $('pd-note'), connect: $('pd-connect'), disconnect: $('pd-disconnect'), tare: $('pd-tare'), ping: $('pd-ping'),
-      settings: $('pd-settings'), apply: $('pd-apply'), save: $('pd-save') };
+      settings: $('pd-settings'), apply: $('pd-apply'), save: $('pd-save'), restart: $('pd-restart') };
     kind = window.GCLink.servedByPedal() ? 'websocket' : ('serial' in navigator ? 'serial' : null);
     if (kind) link = window.GCLink.createLink(kind, events);
     if (!kind) { setStatus('no pedal link here — open this page from the pedal’s WiFi, or use Chrome / Edge with a USB cable'); ui.connect.disabled = true; }
@@ -188,6 +189,7 @@
     ui.disconnect.addEventListener('click', () => link && link.disconnect());
     ui.tare.addEventListener('click', () => tx(CMD.TARE));
     ui.ping.addEventListener('click', () => { lastPingAt = performance.now(); tx(CMD.PING); });
+    ui.restart.addEventListener('click', () => { tx(0x23, new Uint8Array([0x52])); ui.note.textContent = 'pedal restarting…'; });
     ui.settings.addEventListener('input', () => setDirty(true));
     ui.settings.addEventListener('change', () => setDirty(true));
     ui.apply.addEventListener('click', () => { if (!settings) return; tx(CMD.SET_SETTINGS, encodeSettings(readSettings())); ui.note.textContent = 'applied'; ui.note.className = 'gc-status'; });
