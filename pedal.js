@@ -17,7 +17,7 @@
 
   let hooks = {}, ui = {}, link = null, kind = null, info = null, settings = null, dirty = false, lastAxisMs = 0, lastPingAt = 0;
   /* bench readout: the pedal answers DIAG from its network task, so it still speaks when its main loop has stalled */
-  let diagTimer = null, diagText = '', diagAt = 0;
+  let diagTimer = null, diagText = '', diagText2 = '', diagAt = 0;
   /* Ground Control behind the pedal (protocol v2 HELLO relayed as GC_STATUS) */
   let gc = { present: false, fw: '', caps: 0, protocol: 0 };
   const rawTaps = new Set(), gcTaps = new Set();
@@ -108,7 +108,8 @@
   function renderDiag() {
     if (!ui.diag) return;
     const age = diagAt ? (performance.now() - diagAt) / 1000 : 0;
-    ui.diag.textContent = diagText ? (age > 5 ? `${diagText}  (no answer for ${age.toFixed(0)} s)` : diagText) : '';
+    const both = [diagText, diagText2].filter(Boolean).join('\n');
+    ui.diag.textContent = both ? (age > 5 ? `${both}  (no answer for ${age.toFixed(0)} s)` : both) : '';
   }
   function setDirty(d) { dirty = d; ui.apply.classList.toggle('on', d); ui.apply.disabled = !connected() || !d; }
   function setConnectedUi(on) {
@@ -138,7 +139,7 @@
       if (hooks.onAxis) hooks.onAxis(G.bytesToU16(p, 0) / 16383, G.bytesToU16(p, 2) / 16383);
       return;
     }
-    if (f.cmd === RSP.DIAG) { diagText = new TextDecoder().decode(p); diagAt = performance.now(); renderDiag(); return; }
+    if (f.cmd === RSP.DIAG) { const t = new TextDecoder().decode(p); if (t.startsWith('wr ')) diagText2 = t; else diagText = t; diagAt = performance.now(); renderDiag(); return; }
     if (f.cmd === RSP.PONG) { if (lastPingAt) { ui.note.textContent = `pong · ${(performance.now() - lastPingAt).toFixed(1)} ms`; lastPingAt = 0; } return; }
     if (f.cmd === RSP.INFO) { info = decodeInfo(p); renderInfo(); return; }
     if (f.cmd === RSP.SETTINGS) { settings = decodeSettings(p); renderSettings(); ui.note.textContent = 'settings from the pedal'; return; }
