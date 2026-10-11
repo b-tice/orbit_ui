@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.43';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.44';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -276,6 +276,7 @@ function migrateAxes(axes, layerOn) {
         if (z.exit === undefined) z.exit = 'hold';
       }
       if (a.outputs.analog.invert === undefined) a.outputs.analog.invert = false;
+      if (a.outputs.midi.route === undefined) a.outputs.midi.route = 'both';   /* v1.44: per-axis routing */
       continue;
     }
     if (a.zones) {           /* v1.8: a single zone set = the MIDI tab */
@@ -448,7 +449,7 @@ function reservedByLink(z) {
   if (state.tab !== 'midi' || z.ch !== 1) return false;
   if (z.type === 'ctl') return LINK_CCS.includes(z.cc);
   if (z.type === 'note') return z.note === LINK_NOTE;
-  if (z.type === 'switch') return z.action === 'cc' ? LINK_CCS.includes(z.cc) : z.note === LINK_NOTE;
+  if (z.type === 'switch') return z.action === 'cc' ? LINK_CCS.includes(z.cc) : z.action === 'freeze' ? false : z.note === LINK_NOTE;
   return false;
 }
 /* does z share channel+CC with another Controller it overlaps? (shown amber) */
@@ -570,6 +571,7 @@ function zoneShortLabel(axis, z) {
   if (z.type === 'switch') {
     const st = simSwitch[z.id] ? ' · ON' : '';
     if (analog) return `⚡ ${toV(z.offVal).toFixed(1)}/${toV(z.onVal).toFixed(1)}V${st}`;
+    if (z.action === 'freeze') return '⚡ FRZ ' + axis.freeze + st;
     return '⚡ ' + (z.action === 'cc' ? 'CC' + z.cc : noteName(z.note)) + ' ch' + z.ch + st;
   }
   return analog ? 'CV' : `CH${z.ch} · CC${z.cc}`;
@@ -591,6 +593,7 @@ function zoneOutput(axis, z, t) {
     /* analog: the switch IS the jack's voltage while on; off it is silent
        and the Controller underneath shows instead */
     if (analog) return on ? `⚡${jackV(axis, z.onVal).toFixed(2)}V` : null;
+    if (z.action === 'freeze') return `⚡FRZ ${axis.freeze} ${on ? 'HELD' : 'free'}`;
     return `⚡${z.action === 'cc' ? 'CC' + z.cc : noteName(z.note)} ${on ? 'ON' : 'off'}`;
   }
   return null;
@@ -650,6 +653,7 @@ function gcAddZoneFor(axisKey, eff, par) {
    each last toggled either way (for the brief glow that marks the toggle) */
 const simSwitch = {};
 const simFlash = {};
+let pedalFrozen = { yaw: false, pitch: false };   /* the pedal reports which axis a freeze is holding */
 const FLASH_MS = 1500;
 
 /* ── geometry / rendering ────────────────────────────────────────── */
@@ -675,6 +679,9 @@ function buildPanels() {
         <div class="axis-title"><b>${axis.label}</b><small>${axis.sub}</small></div>
         <div class="axis-out"><span class="amb-led"></span><span data-out></span></div>
         <div class="axis-tools">
+          ${state.tab === 'midi' ? `<div class="seg route" data-route title="where this axis goes while docked on Ground Control: BOTH = the program's MIDI out of the unit's DAW port and the raw axis to the DSP · MIDI = MIDI only, the DSP does not follow this axis · GC = the DSP only, no MIDI from this axis">
+            ${['both', 'midi', 'gc'].map(r => `<button class="${(axis.outputs.midi.route || 'both') === r ? 'on' : ''}" data-r="${r}" type="button">${r.toUpperCase()}</button>`).join('')}
+          </div>` : ''}
           ${state.tab === 'analog' ? `<label class="polarity" title="flip the jack's output: 0→5 V or 5→0 V across the same curve">
             <span class="pol-lbl">Polarity</span>
             <input type="checkbox" data-invert ${axis.outputs.analog.invert ? 'checked' : ''}>
@@ -695,6 +702,11 @@ function buildPanels() {
       flashProgName();
     });
     panel.querySelector('[data-addzone]').addEventListener('click', e => addZone(axis, e.clientX, e.clientY));
+    panel.querySelectorAll('[data-route] button').forEach(b => b.addEventListener('click', () => {
+      axis.outputs.midi.route = b.dataset.r;
+      panel.querySelectorAll('[data-route] button').forEach(x => x.classList.toggle('on', x === b));
+      commit(axis);
+    }));
     const inv = panel.querySelector('[data-invert]');
     if (inv) inv.addEventListener('change', () => {
       axis.outputs.analog.invert = inv.checked;
@@ -1058,7 +1070,7 @@ function render(axis) {
     idle.push(`${m.label}${fmt(m.v)} ${z.exit === 'reset' ? 'reset' : 'hold'}`);
   }
   const text = outs.length ? outs.join(' · ') : (idle.length ? idle.join(' · ') : 'DEAD');
-  ed.outEl.textContent = text + (analog && axis.outputs.analog.invert ? '  ⇅' : '');
+  ed.outEl.textContent = text + (analog && axis.outputs.analog.invert ? '  ⇅' : '') + (pedalFrozen[axis.key] ? '  ❄ HELD' : '');
   if (axis.key === 'yaw') layoutVert();
 }
 
@@ -1188,7 +1200,8 @@ function axisDirty(axis) {
   if (!f) return true;
   const name = (state.names[tab] || 'UNTITLED').toUpperCase().slice(0, 10);
   return name !== f.name || JSON.stringify(Z(axis)) !== JSON.stringify(f.axes[axis.key])
-    || (tab === 'analog' && !!axis.outputs.analog.invert !== !!fileInv(f)[axis.key]);
+    || (tab === 'analog' && !!axis.outputs.analog.invert !== !!fileInv(f)[axis.key])
+    || (tab === 'midi' && (axis.outputs.midi.route || 'both') !== (fileRoute(f)[axis.key] || 'both'));
 }
 function updateSaveButtons() {
   for (const key of ['yaw', 'pitch']) {
@@ -1496,14 +1509,15 @@ function openZonePopover(axis, z, cx, cy) {
       <div class="pop-note">a fast entry (faster than Speed) toggles it · while ON the jack holds the on voltage and the controller underneath is silenced · off, the controller's curve is the output</div>`;
   } else if (z.type === 'switch') {
     rows = `<div class="pop-row"><label>Action</label>
-        <div class="seg"><button class="${z.action !== 'cc' ? 'on' : ''}" data-action="note" type="button">Note</button><button class="${z.action === 'cc' ? 'on' : ''}" data-action="cc" type="button">CC</button></div></div>
-      ${numRow('Transmit ch', 'zch', z.ch, 1, 16)}
+        <div class="seg"><button class="${!z.action || z.action === 'note' ? 'on' : ''}" data-action="note" type="button">Note</button><button class="${z.action === 'cc' ? 'on' : ''}" data-action="cc" type="button">CC</button><button class="${z.action === 'freeze' ? 'on' : ''}" data-action="freeze" type="button" title="a fast entry latches a freeze of the ${axis.freeze} axis; the next fast entry releases it — MIDI and, docked, the DSP">Freeze ${axis.freeze}</button></div></div>
+      ${z.action === 'freeze' ? '' : numRow('Transmit ch', 'zch', z.ch, 1, 16)}
       ${z.action === 'cc'
         ? `${numRow('CC #', 'zcc', z.cc, 0, 127)}${numRow('On value', 'zon', z.onVal, 0, 127)}${numRow('Off value', 'zoff', z.offVal, 0, 127)}`
+        : z.action === 'freeze' ? ''
         : `${numRow('Note #', 'znote', z.note, 0, 127)}
            <div class="pop-row"><label>Note</label><span class="pop-note" id="znName">${noteName(z.note)}</span></div>`}
       ${numRow('Speed m/s', 'zspeed', z.speedMs.toFixed(2), 0.05, 3, 'step="0.05"')}
-      <div class="pop-note">a fast entry (faster than Speed) toggles on / off · slow entry does nothing · controllers underneath keep sending</div>`;
+      <div class="pop-note">${z.action === 'freeze' ? `a fast entry latches the ${axis.freeze} value where it is (its MIDI, and the DSP while docked); the next fast entry lets it go · slow entry does nothing` : 'a fast entry (faster than Speed) toggles on / off · slow entry does nothing · controllers underneath keep sending'}</div>`;
   } else if (z.type === 'freeze') {
     rows = `<div class="pop-note">while the pedal is in this zone the ${axis.freeze} value is held</div>`;
   } else {
@@ -1610,6 +1624,8 @@ const curName = () => (state.names[state.tab] || 'UNTITLED').toUpperCase().slice
 const axesZones = tab => ({ yaw: state.axes.yaw.outputs[tab].zones, pitch: state.axes.pitch.outputs[tab].zones });
 /* analog files also carry each axis's polarity */
 const axesInv = () => ({ yaw: !!state.axes.yaw.outputs.analog.invert, pitch: !!state.axes.pitch.outputs.analog.invert });
+const axesRoute = () => ({ yaw: state.axes.yaw.outputs.midi.route || 'both', pitch: state.axes.pitch.outputs.midi.route || 'both' });
+const fileRoute = f => (f && f.route) || { yaw: 'both', pitch: 'both' };
 const fileInv = f => (f && f.inv) || { yaw: false, pitch: false };
 
 /* the current tab's loaded file's 1-based Set List position (its PC number), or null */
@@ -1645,6 +1661,7 @@ function saveProgram(asNew, tab) {
     state.loaded[tab] = f.id;
   }
   if (tab === 'analog') f.inv = axesInv();
+  if (tab === 'midi') f.route = axesRoute();
   saveState();
   renderLibrarian();
   updateSaveButtons();
@@ -1695,6 +1712,7 @@ function loadFile(id, tab) {
   for (const key of ['yaw', 'pitch']) {
     state.axes[key].outputs[tab].zones = JSON.parse(JSON.stringify(f.axes[key]));
     if (tab === 'analog') state.axes[key].outputs.analog.invert = !!fileInv(f)[key];
+    if (tab === 'midi') state.axes[key].outputs.midi.route = fileRoute(f)[key] || 'both';
   }
   state.names[tab] = f.name;
   state.loaded[tab] = id;
@@ -1727,15 +1745,15 @@ function loadSlot(i, fromPedal) {
 }
 /* the pedal recalled a slot (a Program Change on its port, or RECALL): follow it */
 function pedalRecalled(bank, idx, ok, gcId) {
-  if (!ok) { showMiLog({ ok: false, msg: `PC ${idx + 1} bank ${bank} — the pedal has no slot there` }); return; }
+  if (!ok) { showMiLog({ ok: false, msg: `PC ${idx + 1} bank ${bank + 1} — the pedal has no slot there` }); return; }
   const l = state.setlists.find(x => (x.bank | 0) === bank);
-  if (!l || !l.slots[idx]) { showMiLog({ ok: false, msg: `PC ${idx + 1} bank ${bank} — recalled on the pedal, not in this browser's Set Lists` }); return; }
+  if (!l || !l.slots[idx]) { showMiLog({ ok: false, msg: `PC ${idx + 1} bank ${bank + 1} — recalled on the pedal, not in this browser's Set Lists` }); return; }
   state.activeSetlist = l.id;
   loadSlot(idx, true);
   renderLibrarian();
   const row = setListEl.querySelector(`.set-row[data-idx="${idx}"]`);
   if (row) { row.classList.add('rx'); row.addEventListener('animationend', () => row.classList.remove('rx'), { once: true }); }
-  showMiLog({ ok: true, msg: `PC ${idx + 1} bank ${bank} → "${l.name}" slot ${idx + 1}${gcId ? ' · GC ' + gcId : ''}` });
+  showMiLog({ ok: true, msg: `PC ${idx + 1} bank ${bank + 1} → "${l.name}" slot ${idx + 1}${gcId ? ' · GC ' + gcId : ''}` });
 }
 
 /* the Library column on the GROUND CONTROL tab: the unit's Setup bank */
@@ -1806,7 +1824,7 @@ const slSelect = document.getElementById('slSelect');
 function renderSetlistTools() {
   const l = activeSL();
   slSelect.innerHTML = state.setlists.map(x =>
-    `<option value="${x.id}"${x.id === l.id ? ' selected' : ''}>${esc(x.name)} · bank ${x.bank}</option>`).join('');
+    `<option value="${x.id}"${x.id === l.id ? ' selected' : ''}>${esc(x.name)} · bank ${x.bank + 1}</option>`).join('');
 }
 slSelect.addEventListener('change', () => {
   guardUnsaved('switching Set Lists', () => {
@@ -1828,11 +1846,11 @@ function openSetlistDialog(l) {
   document.getElementById('slTitle').textContent = l ? 'EDIT SET LIST' : 'NEW SET LIST';
   document.querySelector('#slOk .amb-button-cap').textContent = l ? 'Save' : 'Create';
   slDel.hidden = !l;
-  if (l) { slName.value = l.name; slBank.value = l.bank; }
+  if (l) { slName.value = l.name; slBank.value = l.bank + 1; }
   else {
     const used = new Set(state.setlists.map(x => x.bank));
     let bank = 0; while (used.has(bank) && bank < 127) bank++;
-    slName.value = `SET LIST ${state.setlists.length + 1}`; slBank.value = bank;
+    slName.value = `SET LIST ${state.setlists.length + 1}`; slBank.value = bank + 1;
   }
   slWrap.hidden = false;
   slName.focus(); slName.select();
@@ -1848,7 +1866,7 @@ document.getElementById('slScrim').addEventListener('click', closeSetlistDialog)
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !slWrap.hidden) closeSetlistDialog(); });
 document.getElementById('slOk').addEventListener('click', () => {
   const name = (slName.value || 'SET LIST').toUpperCase().slice(0, 10).trim() || 'SET LIST';
-  const bank = clampi(parseFloat(slBank.value), 0, 127);
+  const bank = clampi(parseFloat(slBank.value), 1, 128) - 1;   /* shown 1-based, like a DAW's Bank field; stored 0-based (the wire value) */
   const clash = state.setlists.find(x => x !== slEditing && x.bank === bank);
   if (clash && !confirm(`Bank ${bank} already recalls "${clash.name}". Use it for this one too? (Bank Select will pick whichever comes first.)`)) return;
   if (slEditing) { slEditing.name = name; slEditing.bank = bank; }
@@ -2385,7 +2403,16 @@ Pedal.init({
     if (on) setTimeout(() => Pedal.setRxChannel(rxChannelByte()), 1400);
   },
 });
-OrbitProgram.init({ onStatus: (text, cls) => Pedal.note(text, cls), onRecall: pedalRecalled });
+/* the pedal's own Switch / freeze state → the strips (zone i = the i-th zone in push order) */
+function pedalZoneState(zs) {
+  for (const tab of ['midi', 'analog']) for (const key of ['yaw', 'pitch']) {
+    const zones = state.axes[key].outputs[tab].zones.slice(0, 8);
+    zones.forEach((z, i) => { if (z.type === 'switch') { const on = !!((zs[tab][key] >> i) & 1); if (!!simSwitch[z.id] !== on) { simSwitch[z.id] = on; simFlash[z.id] = performance.now(); } } });
+  }
+  pedalFrozen = zs.frozen;
+  for (const key of ['yaw', 'pitch']) if (editors[key]) render(state.axes[key]);
+}
+OrbitProgram.init({ onStatus: (text, cls) => Pedal.note(text, cls), onRecall: pedalRecalled, onZoneState: pedalZoneState });
 /* a Ground Control appears behind the pedal: show the tab and go through the tunnel */
 Pedal.onGc(gc => {
   updateOutTabs();

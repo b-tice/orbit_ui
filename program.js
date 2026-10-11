@@ -12,7 +12,7 @@
 
 (function () {
   const CMD = { BEGIN: 0x30, DATA: 0x31, END: 0x32, GET: 0x33, CLEAR: 0x34, SLOT_BEGIN: 0x35, SLOT_DATA: 0x36, SLOT_END: 0x37, SLOT_ERASE: 0x38, SLOT_LIST: 0x39, SLOT_RECALL: 0x3a };
-  const RSP = { ACK: 0xb0, CHUNK: 0xb1, SLOT_ACK: 0xb2, SLOT_LIST: 0xb3, SLOT_CHANGED: 0xb4 };
+  const RSP = { ACK: 0xb0, CHUNK: 0xb1, SLOT_ACK: 0xb2, SLOT_LIST: 0xb3, SLOT_CHANGED: 0xb4, ZONE_STATE: 0xb5 };
   const NO_GC = 0xff;
   const TYPES = ['ctl', 'note', 'switch', 'freeze', 'dead'];
   const MAX_ZONES = 8, MAX_POINTS = 8, CHUNK = 150;
@@ -28,7 +28,7 @@
     for (const z of zs) {
       const type = Math.max(0, TYPES.indexOf(z.type));
       const lo = u16(z.lo), hi = u16(z.hi);
-      const flags = (z.smooth ? 1 : 0) | (z.exit === 'reset' ? 2 : 0) | (z.action === 'cc' ? 4 : 0);
+      const flags = (z.smooth ? 1 : 0) | (z.exit === 'reset' ? 2 : 0) | (z.action === 'cc' ? 4 : 0) | (z.action === 'freeze' ? 8 : 0);
       let pts = (z.points || []).slice().sort((a, b) => a.x - b.x);
       if (type !== 0) pts = [];
       else if (pts.length > MAX_POINTS) pts = [pts[0], ...pts.slice(1, -1).slice(0, MAX_POINTS - 2), pts[pts.length - 1]];
@@ -43,14 +43,18 @@
     const file = (tab, id) => (id && state.library[tab].find(f => f.id === id)) || null;
     const m = file('midi', sl.midi), a = file('analog', sl.analog);
     const inv = (a && a.inv) || { yaw: false, pitch: false };
-    const out = [1, (inv.yaw ? 1 : 0) | (inv.pitch ? 2 : 0)];
+    const route = (m && m.route) || { yaw: 'both', pitch: 'both' };
+    const out = [1, (inv.yaw ? 1 : 0) | (inv.pitch ? 2 : 0) | routeBits(route)];
     for (const key of ['yaw', 'pitch']) encodeAxis(m ? (m.axes[key] || []) : [], out);
     for (const key of ['yaw', 'pitch']) encodeAxis(a ? (a.axes[key] || []) : [], out);
     return new Uint8Array(out);
   }
+  /* per-axis routing (MIDI tab): 'both' (default) · 'midi' = no raw axis to the unit · 'gc' = no MIDI from the program */
+  const routeBits = r => ((r.yaw === 'gc' ? 4 : 0) | (r.pitch === 'gc' ? 8 : 0) | (r.yaw === 'midi' ? 16 : 0) | (r.pitch === 'midi' ? 32 : 0));
   /* the live state's two outputs → the blob */
   function encode(state) {
-    const out = [1, (state.axes.yaw.outputs.analog.invert ? 1 : 0) | (state.axes.pitch.outputs.analog.invert ? 2 : 0)];
+    const route = { yaw: state.axes.yaw.outputs.midi.route || 'both', pitch: state.axes.pitch.outputs.midi.route || 'both' };
+    const out = [1, (state.axes.yaw.outputs.analog.invert ? 1 : 0) | (state.axes.pitch.outputs.analog.invert ? 2 : 0) | routeBits(route)];
     for (const tab of ['midi', 'analog']) for (const key of ['yaw', 'pitch']) encodeAxis(state.axes[key].outputs[tab].zones, out);
     return new Uint8Array(out);
   }
@@ -84,6 +88,7 @@
   /* ---- Set List slots on the pedal --------------------------------------- */
   let slotAck = null;            /* { resolve, reject, timer } for the slot push in flight */
   let onRecall = () => {};       /* app hook: the pedal recalled (bank, slot, ok, gcId) */
+  let onZoneState = () => {};    /* app hook: the pedal's Switch / freeze state changed */
   const pushed = new Map();      /* "bank:slot" → hex of the last blob+gc pushed, to skip unchanged slots */
   let syncTimer = null, syncing = false, syncAgain = false;
 
@@ -154,6 +159,11 @@
       if (f.payload[0]) a.resolve(); else a.reject(new Error(`slot ${f.payload[1]}:${f.payload[2]} rejected`));
       return;
     }
+    if (f.cmd === RSP.ZONE_STATE && f.payload.length >= 5) {
+      const p = f.payload;
+      onZoneState({ midi: { yaw: p[0], pitch: p[1] }, analog: { yaw: p[2], pitch: p[3] }, frozen: { yaw: !!(p[4] & 1), pitch: !!(p[4] & 2) } });
+      return;
+    }
     if (f.cmd === RSP.SLOT_CHANGED) {
       const p = f.payload;
       const gcId = p[3] === NO_GC ? null : String.fromCharCode(65 + p[3]) + p[4];
@@ -221,6 +231,7 @@
   function init(opts) {
     onStatus = (opts && opts.onStatus) || onStatus;
     onRecall = (opts && opts.onRecall) || onRecall;
+    onZoneState = (opts && opts.onZoneState) || onZoneState;
     if (window.Pedal) window.Pedal.onRaw(onFrame);
   }
 
