@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.42';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.43';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -396,8 +396,15 @@ function loadState() {
   return defaultState();
 }
 
+let setlistSig = '';
 function saveState() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) {}
+  /* the pedal keeps a copy of every Set List slot for Program Change recall:
+     push whenever the Set Lists or the files they point at change */
+  if (window.OrbitProgram) {
+    const sig = JSON.stringify([state.setlists, state.library]);
+    if (sig !== setlistSig) { setlistSig = sig; OrbitProgram.scheduleSync(state); }
+  }
 }
 
 /* ── zone queries ────────────────────────────────────────────────── */
@@ -1710,12 +1717,25 @@ function refreshEditor() {
   layoutVert();
 }
 /* load a Set List slot: every output that has a file (the pedal's PC behavior) */
-function loadSlot(i) {
+function loadSlot(i, fromPedal) {
   const sl = slots()[i];
   if (!sl) return;
   for (const tab of TAB_ORDER) if (sl[tab]) loadFile(sl[tab], tab);
-  if (sl.gc && GCTab.isConnected()) { const s = GCTab.parseId(sl.gc); if (s) GCTab.load(s.L, s.D); }
+  /* the pedal already loaded this slot's GC Setup through the tunnel when it did the recall */
+  if (!fromPedal && sl.gc && GCTab.isConnected()) { const s = GCTab.parseId(sl.gc); if (s) GCTab.load(s.L, s.D); }
   refreshEditor();
+}
+/* the pedal recalled a slot (a Program Change on its port, or RECALL): follow it */
+function pedalRecalled(bank, idx, ok, gcId) {
+  if (!ok) { showMiLog({ ok: false, msg: `PC ${idx + 1} bank ${bank} — the pedal has no slot there` }); return; }
+  const l = state.setlists.find(x => (x.bank | 0) === bank);
+  if (!l || !l.slots[idx]) { showMiLog({ ok: false, msg: `PC ${idx + 1} bank ${bank} — recalled on the pedal, not in this browser's Set Lists` }); return; }
+  state.activeSetlist = l.id;
+  loadSlot(idx, true);
+  renderLibrarian();
+  const row = setListEl.querySelector(`.set-row[data-idx="${idx}"]`);
+  if (row) { row.classList.add('rx'); row.addEventListener('animationend', () => row.classList.remove('rx'), { once: true }); }
+  showMiLog({ ok: true, msg: `PC ${idx + 1} bank ${bank} → "${l.name}" slot ${idx + 1}${gcId ? ' · GC ' + gcId : ''}` });
 }
 
 /* the Library column on the GROUND CONTROL tab: the unit's Setup bank */
@@ -2122,9 +2142,11 @@ const globalChSel = document.getElementById('globalCh');
 globalChSel.innerHTML = '<option value="omni">OMNI</option>'
   + Array.from({ length: 16 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('');
 globalChSel.value = String(state.globalCh);
+const rxChannelByte = () => (state.globalCh === 'omni' ? 0x7f : (state.globalCh - 1) & 15);
 globalChSel.addEventListener('change', () => {
   state.globalCh = globalChSel.value === 'omni' ? 'omni' : +globalChSel.value;
   saveState();
+  Pedal.setRxChannel(rxChannelByte());   /* the pedal listens on this channel for Program Changes */
 });
 
 /* Bank Select (CC 0) on the receive channel picks the Set List with that
@@ -2347,6 +2369,7 @@ gcSimToggle.addEventListener('change', () => {
 let pedalRenderAt = 0;
 Pedal.init({
   mount: document.getElementById('pedalTab'),
+  rxChannel: () => rxChannelByte(),
   onAxis: (pitch01, yaw01) => {
     state.axes.pitch.sim = pitch01; state.axes.yaw.sim = yaw01;
     GCTab.feedAxis(pitch01, yaw01);
@@ -2358,9 +2381,11 @@ Pedal.init({
   onLink: on => {
     const led = document.getElementById('powerLed'); led.style.setProperty('--amb-led-color', on ? '#2dd4bf' : '#6366f1'); led.title = on ? 'Orbit pedal connected' : '';
     if (on) setTimeout(() => OrbitProgram.schedule(state, true), 400);   /* the pedal gets what the app shows, right after its settings */
+    if (on) { OrbitProgram.forgetPushed(); setTimeout(() => OrbitProgram.scheduleSync(state), 900); }   /* and every Set List slot, for Program Change recall */
+    if (on) setTimeout(() => Pedal.setRxChannel(rxChannelByte()), 1400);
   },
 });
-OrbitProgram.init({ onStatus: (text, cls) => Pedal.note(text, cls) });
+OrbitProgram.init({ onStatus: (text, cls) => Pedal.note(text, cls), onRecall: pedalRecalled });
 /* a Ground Control appears behind the pedal: show the tab and go through the tunnel */
 Pedal.onGc(gc => {
   updateOutTabs();

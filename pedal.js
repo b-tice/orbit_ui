@@ -12,7 +12,7 @@
   const G = window.GCP;
   const CMD = { PING: 0x01, GET_SETTINGS: 0x10, SET_SETTINGS: 0x11, SAVE: 0x12, TARE: 0x13, GET_INFO: 0x14, GC_TUNNEL: 0x20, GC_STATUS: 0x21, DIAG: 0x22 };
   const RSP = { PONG: 0x81, AXIS: 0x82, SETTINGS: 0x90, SAVED: 0x91, TARED: 0x92, INFO: 0x93, GC_TUNNEL: 0xa0, GC_STATUS: 0xa1, DIAG: 0xa2 };
-  const BLOB_VERSION = 1, BLOB_LEN = 15;
+  const BLOB_VERSION = 2, BLOB_LEN = 15;   /* v2 = 16 bytes (adds the receive channel); the pedal still accepts 15-byte v1 */
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   let hooks = {}, ui = {}, link = null, kind = null, info = null, settings = null, dirty = false, lastAxisMs = 0, lastPingAt = 0;
@@ -25,9 +25,10 @@
   const decodeSettings = p => (p.length < BLOB_LEN ? null : {
     channel: p[1] & 15, ccPitch: p[2] & 127, ccYaw: p[3] & 127, enPitch: !!p[4], enYaw: !!p[5], invPitch: !!p[6], invYaw: !!p[7],
     tapEnable: !!p[8], tapNote: p[9] & 127, outMinPitch: p[10] & 127, outMaxPitch: p[11] & 127, outMinYaw: p[12] & 127, outMaxYaw: p[13] & 127, wifiEnable: !!p[14],
+    rxChannel: p.length >= 16 ? p[15] : 0x7f,   /* 0-15, or 0x7f = omni */
   });
   const encodeSettings = s => new Uint8Array([BLOB_VERSION, s.channel & 15, s.ccPitch & 127, s.ccYaw & 127, s.enPitch ? 1 : 0, s.enYaw ? 1 : 0, s.invPitch ? 1 : 0, s.invYaw ? 1 : 0,
-    s.tapEnable ? 1 : 0, s.tapNote & 127, s.outMinPitch & 127, s.outMaxPitch & 127, s.outMinYaw & 127, s.outMaxYaw & 127, s.wifiEnable ? 1 : 0]);
+    s.tapEnable ? 1 : 0, s.tapNote & 127, s.outMinPitch & 127, s.outMaxPitch & 127, s.outMinYaw & 127, s.outMaxYaw & 127, s.wifiEnable ? 1 : 0, s.rxChannel === undefined ? 0x7f : s.rxChannel]);
   const decodeInfo = p => (p.length < 13 ? null : {
     fw: `${p[0]}.${p[1]}.${p[2]}`, hwRev: p[3],
     mac: Array.from(p.subarray(4, 10), b => b.toString(16).padStart(2, '0').toUpperCase()).join(':'),
@@ -102,6 +103,7 @@
       const f = el.dataset.f;
       s[f] = el.type === 'checkbox' ? el.checked : Math.max(0, Math.min(127, Math.round(parseFloat(el.value) || 0)));
     }
+    if (hooks.rxChannel) s.rxChannel = hooks.rxChannel();   /* the header's RECEIVE CH owns this field */
     if (s.outMaxPitch <= s.outMinPitch) s.outMaxPitch = Math.min(127, s.outMinPitch + 1);
     if (s.outMaxYaw <= s.outMinYaw) s.outMaxYaw = Math.min(127, s.outMinYaw + 1);
     return s;
@@ -143,7 +145,7 @@
     if (f.cmd === RSP.DIAG) { const t = new TextDecoder().decode(p); if (t.startsWith('wr ')) diagText2 = t; else diagText = t; diagAt = performance.now(); renderDiag(); return; }
     if (f.cmd === RSP.PONG) { if (lastPingAt) { ui.note.textContent = `pong · ${(performance.now() - lastPingAt).toFixed(1)} ms`; lastPingAt = 0; } return; }
     if (f.cmd === RSP.INFO) { info = decodeInfo(p); renderInfo(); return; }
-    if (f.cmd === RSP.SETTINGS) { settings = decodeSettings(p); renderSettings(); ui.note.textContent = 'settings from the pedal'; return; }
+    if (f.cmd === RSP.SETTINGS) { settings = decodeSettings(p); renderSettings(); ui.note.textContent = 'settings from the pedal'; if (hooks.onSettings) hooks.onSettings(settings); return; }
     if (f.cmd === RSP.SAVED) { ui.note.textContent = p[0] ? 'saved to the pedal' : 'save FAILED'; ui.note.className = 'gc-status ' + (p[0] ? 'ok' : 'err'); return; }
     if (f.cmd === RSP.TARED) { ui.note.textContent = 'tared'; ui.note.className = 'gc-status ok'; return; }
   }
@@ -208,6 +210,8 @@
     send: (cmd, payload) => { if (!connected()) return Promise.reject(new Error('the pedal is not connected')); return link.send(G.encodeFrame(cmd, payload || new Uint8Array(0))); },
     note: (text, cls) => { ui.note.textContent = text; ui.note.className = 'gc-status' + (cls ? ' ' + cls : ''); },
     askGcStatus: () => tx(CMD.GC_STATUS),
+    /* push the header's receive channel to the pedal (settings blob v2), keeping the rest as the pedal has it */
+    setRxChannel: rx => { if (!settings) return; settings.rxChannel = rx; tx(CMD.SET_SETTINGS, encodeSettings(settings)); setTimeout(() => tx(CMD.SAVE), 60); },
     TUNNEL_REPLY: RSP.GC_TUNNEL,
   };
 })();

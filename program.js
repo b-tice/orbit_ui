@@ -11,8 +11,9 @@
 'use strict';
 
 (function () {
-  const CMD = { BEGIN: 0x30, DATA: 0x31, END: 0x32, GET: 0x33, CLEAR: 0x34 };
-  const RSP = { ACK: 0xb0, CHUNK: 0xb1 };
+  const CMD = { BEGIN: 0x30, DATA: 0x31, END: 0x32, GET: 0x33, CLEAR: 0x34, SLOT_BEGIN: 0x35, SLOT_DATA: 0x36, SLOT_END: 0x37, SLOT_ERASE: 0x38, SLOT_LIST: 0x39, SLOT_RECALL: 0x3a };
+  const RSP = { ACK: 0xb0, CHUNK: 0xb1, SLOT_ACK: 0xb2, SLOT_LIST: 0xb3, SLOT_CHANGED: 0xb4 };
+  const NO_GC = 0xff;
   const TYPES = ['ctl', 'note', 'switch', 'freeze', 'dead'];
   const MAX_ZONES = 8, MAX_POINTS = 8, CHUNK = 150;
 
@@ -35,6 +36,17 @@
         c7(z.note), c7(z.vel), c7(z.onVal), c7(z.offVal), Math.max(0, Math.min(255, Math.round((z.speedMs || 0.1) * 100))), pts.length);
       for (const p of pts) { const x = u16(p.x); out.push(x & 255, x >> 8, c7(p.y)); }
     }
+  }
+  /* one Set List slot → the blob: the slot's MIDI and ANALOG OUT library files
+     (a missing file = no zones on that output) */
+  function encodeSlot(state, sl) {
+    const file = (tab, id) => (id && state.library[tab].find(f => f.id === id)) || null;
+    const m = file('midi', sl.midi), a = file('analog', sl.analog);
+    const inv = (a && a.inv) || { yaw: false, pitch: false };
+    const out = [1, (inv.yaw ? 1 : 0) | (inv.pitch ? 2 : 0)];
+    for (const key of ['yaw', 'pitch']) encodeAxis(m ? (m.axes[key] || []) : [], out);
+    for (const key of ['yaw', 'pitch']) encodeAxis(a ? (a.axes[key] || []) : [], out);
+    return new Uint8Array(out);
   }
   /* the live state's two outputs → the blob */
   function encode(state) {
@@ -69,7 +81,85 @@
   let onStatus = () => {};
   let timer = null, lastPushed = null, wantPersist = false;
 
+  /* ---- Set List slots on the pedal --------------------------------------- */
+  let slotAck = null;            /* { resolve, reject, timer } for the slot push in flight */
+  let onRecall = () => {};       /* app hook: the pedal recalled (bank, slot, ok, gcId) */
+  const pushed = new Map();      /* "bank:slot" → hex of the last blob+gc pushed, to skip unchanged slots */
+  let syncTimer = null, syncing = false, syncAgain = false;
+
+  const hex = u8 => Array.from(u8, b => b.toString(16).padStart(2, '0')).join('');
+  async function sendSlot(bank, slot, gcL, gcD, blob) {
+    const P = window.Pedal;
+    if (!P || !P.isConnected()) throw new Error('the pedal is not connected');
+    await P.send(CMD.SLOT_BEGIN, new Uint8Array([bank, slot, blob.length & 255, blob.length >> 8, gcL, gcD]));
+    for (let off = 0; off < blob.length; off += CHUNK) {
+      const part = blob.subarray(off, Math.min(blob.length, off + CHUNK));
+      const frame = new Uint8Array(2 + part.length); frame[0] = off & 255; frame[1] = off >> 8; frame.set(part, 2);
+      await P.send(CMD.SLOT_DATA, frame);
+      await sleep(25);
+    }
+    const done = new Promise((resolve, reject) => { slotAck = { resolve, reject, timer: setTimeout(() => { slotAck = null; reject(new Error('no answer from the pedal')); }, 2500) }; });
+    await P.send(CMD.SLOT_END, new Uint8Array(0));
+    return done;
+  }
+  function gcOf(sl) {
+    const m = /^([A-Z])(\d)$/.exec(sl.gc || '');
+    return m ? [m[1].charCodeAt(0) - 65, +m[2]] : [NO_GC, NO_GC];
+  }
+  /* push every Set List slot whose content changed since the last push; erase
+     slots the pedal may still hold that no longer exist */
+  async function syncSetlists(state) {
+    const P = window.Pedal;
+    if (!P || !P.isConnected()) return;
+    if (syncing) { syncAgain = true; return; }
+    syncing = true;
+    let sent = 0;
+    try {
+      const live = new Set();
+      for (const l of state.setlists) {
+        const bank = l.bank | 0;
+        for (let i = 0; i < l.slots.length && i < 128; i++) {
+          const sl = l.slots[i];
+          if (!sl) continue;
+          const [gcL, gcD] = gcOf(sl);
+          const blob = encodeSlot(state, sl);
+          const key = `${bank}:${i}`, sig = hex(blob) + ':' + gcL + ':' + gcD;
+          live.add(key);
+          if (pushed.get(key) === sig) continue;
+          await sendSlot(bank, i, gcL, gcD, blob);
+          pushed.set(key, sig); sent++;
+        }
+      }
+      for (const key of [...pushed.keys()]) {
+        if (live.has(key)) continue;
+        const [bank, i] = key.split(':').map(Number);
+        await P.send(CMD.SLOT_ERASE, new Uint8Array([bank, i]));
+        pushed.delete(key);
+      }
+      if (sent) onStatus(`${sent} Set List slot${sent === 1 ? '' : 's'} on the pedal`, 'ok');
+    } catch (err) {
+      onStatus(`Set List push failed: ${err.message}`, 'err');
+    } finally {
+      syncing = false;
+      if (syncAgain) { syncAgain = false; scheduleSync(state); }
+    }
+  }
+  function scheduleSync(state) { clearTimeout(syncTimer); syncTimer = setTimeout(() => syncSetlists(state).catch(() => {}), 600); }
+  function forgetPushed() { pushed.clear(); }
+  function recall(bank, slot) { const P = window.Pedal; return P && P.isConnected() ? P.send(CMD.SLOT_RECALL, new Uint8Array([bank, slot])) : Promise.resolve(); }
+
   function onFrame(f) {
+    if (f.cmd === RSP.SLOT_ACK && slotAck) {
+      const a = slotAck; slotAck = null; clearTimeout(a.timer);
+      if (f.payload[0]) a.resolve(); else a.reject(new Error(`slot ${f.payload[1]}:${f.payload[2]} rejected`));
+      return;
+    }
+    if (f.cmd === RSP.SLOT_CHANGED) {
+      const p = f.payload;
+      const gcId = p[3] === NO_GC ? null : String.fromCharCode(65 + p[3]) + p[4];
+      onRecall(p[1], p[2], !!p[0], gcId);
+      return;
+    }
     if (f.cmd === RSP.ACK && pending) {
       const p = pending; pending = null; clearTimeout(p.timer);
       const ok = !!f.payload[0], n = f.payload[1] | (f.payload[2] << 8);
@@ -130,8 +220,10 @@
 
   function init(opts) {
     onStatus = (opts && opts.onStatus) || onStatus;
+    onRecall = (opts && opts.onRecall) || onRecall;
     if (window.Pedal) window.Pedal.onRaw(onFrame);
   }
 
-  window.OrbitProgram = { encode, decode, push, schedule, readBack, clear, init, lastPushed: () => lastPushed, CMD, RSP };
+  window.OrbitProgram = { encode, decode, push, schedule, readBack, clear, init, lastPushed: () => lastPushed, CMD, RSP,
+    encodeSlot, syncSetlists, scheduleSync, forgetPushed, recall };
 })();
