@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.46';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.47';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -665,6 +665,8 @@ function buildPanels() {
   const main = document.getElementById('axes');
   const lib = main.querySelector('.librarian');
   if (lib) document.querySelector('.lib-outer').appendChild(lib);   /* keep it while the strips rebuild */
+  const pd = main.querySelector('#pd-panel');
+  if (pd) document.getElementById('pedalTab').appendChild(pd);     /* and the pedal panel (v1.46: it vanished on a tab switch) */
   main.innerHTML = '';
   main.classList.toggle('vert', !!state.vertPitch);   /* upright PITCH centred under YAW */
   placeLibrarian();
