@@ -53,11 +53,10 @@
         <button class="ghostbtn" id="pd-restart" type="button" disabled title="bench: restart the pedal (tests the unit's recovery)">restart pedal</button>
         <span class="gc-status" id="pd-info"></span>
       </div>
-      <details class="pd-diag-box" id="pd-diag-box">
-        <summary class="gc-status" title="the pedal's health readout, refreshed every 2 s while connected">diagnostics</summary>
-        <div id="pd-diag" style="font-family:var(--mono);font-size:12px;line-height:1.4;color:var(--ink);white-space:pre-wrap;word-break:break-all;padding:4px 0 2px"></div>
-      </details>
-      <div class="pd-settings" id="pd-settings" hidden>
+      <div class="gc-row"><span class="gc-status" id="pd-note"></span></div>
+      <div class="pd-folds">
+      <details class="pd-diag-box pd-settings" id="pd-settings" hidden>
+        <summary class="gc-status" title="the pedal's own settings: tap note, WiFi">settings</summary>
         <div class="pd-grid">
           <label class="polarity" title="a sharp tap on the pedal sends this note (note on, then off)"><span class="pol-lbl">tap note</span><input type="checkbox" data-f="tapEnable"><span class="pol-switch"></span></label>
           <label class="field"><span>NOTE</span><input type="number" min="0" max="127" inputmode="numeric" data-f="tapNote"></label>
@@ -66,8 +65,12 @@
         <div class="gc-row">
           <button class="ghostbtn savebtn" id="pd-apply" type="button" disabled title="send these settings to the pedal (live, until the next power-up)">apply</button>
           <button class="ghostbtn" id="pd-save" type="button" disabled title="store the pedal's live settings in its flash">save to pedal</button>
-          <span class="gc-status" id="pd-note"></span>
         </div>
+      </details>
+      <details class="pd-diag-box" id="pd-diag-box">
+        <summary class="gc-status" title="the pedal's health readout, refreshed every 2 s while connected">diagnostics</summary>
+        <div id="pd-diag" style="font-family:var(--mono);font-size:12px;line-height:1.4;color:var(--ink);white-space:pre-wrap;word-break:break-all;padding:4px 0 2px"></div>
+      </details>
       </div>
     </section>`;
   }

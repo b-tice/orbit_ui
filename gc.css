@@ -231,3 +231,6 @@ body.gc-tab #progName, body.gc-tab .lib-name { text-transform: none; }
 .pd-diag-box > summary::-webkit-details-marker { display: none; }
 .pd-diag-box > summary::before { content: '▸'; font-size: 11px; opacity: .8; }
 .pd-diag-box[open] > summary::before { content: '▾'; }
+.pd-folds { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
+.pd-folds > details { min-width: 0; }
+.pd-folds > details[open] { flex: 1 1 100%; }

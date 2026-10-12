@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.47';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.48';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
