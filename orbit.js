@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.44';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.45';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -769,6 +769,24 @@ const rightMode = () => upright() && !state.pitchCentered && !vertPhone();
 const VERT_GAP = 20;    /* main's grid gap */
 let libSide = false;    /* the Library sits beside PITCH (else below it) */
 const libNarrow = () => upright() && libSide;
+/* David Mash (2026-10): in the centred view the ORBIT PEDAL panel sits to the
+   RIGHT of PITCH, in a box the Library's size (Library on the left). Only when
+   the Library has a side to be on; everywhere else the panel stays below. */
+const pedalBeside = () => upright() && !rightMode() && libSide;
+function placePedalPanel() {
+  const main = document.getElementById('axes'), home = document.getElementById('pedalTab'), panel = document.getElementById('pd-panel');
+  if (!panel) return;
+  if (pedalBeside()) {
+    if (panel.parentElement !== main) main.appendChild(panel);
+    panel.classList.add('beside');
+    home.classList.add('moved');
+  } else {
+    panel.classList.remove('beside');
+    panel.style.height = ''; panel.style.maxHeight = '';
+    if (panel.parentElement !== home) home.appendChild(panel);
+    home.classList.remove('moved');
+  }
+}
 /* the Library section moves under YAW in the upright view and back after */
 function placeLibrarian() {
   const main = document.getElementById('axes'), outer = document.querySelector('.lib-outer'), lib = document.querySelector('.librarian');
@@ -795,6 +813,7 @@ function placeLibrarian() {
     lib.querySelectorAll('.lib-list').forEach(l => { l.style.height = ''; l.style.maxHeight = ''; l.style.minHeight = ''; });
     main.style.removeProperty('--pitch-w');
   }
+  placePedalPanel();
 }
 const VERT_TRAVEL = 880;   /* the strip's travel length upright when nothing else sets it */
 const VERT_ROWS = 4;       /* the Library's lists show exactly this many rows upright */
@@ -826,6 +845,9 @@ function layoutVert() {
     const target = rightMode() ? yp.offsetHeight + VERT_GAP + lib.offsetHeight : lib.offsetHeight;
     const want = target - chrome - (pg.w - travelNow);
     if (Math.abs(want - travelNow) >= 2) { vertTravel = Math.max(200, Math.round(want)); render(state.axes.pitch); }
+    /* the pedal panel beside PITCH: the Library's height, its contents scrolling inside */
+    const pd = document.getElementById('pd-panel');
+    if (pd && pedalBeside()) { pd.style.height = lib.offsetHeight + 'px'; pd.style.maxHeight = lib.offsetHeight + 'px'; }
   } else {
     lists.forEach(l => { l.style.height = ''; l.style.maxHeight = ''; l.style.minHeight = ''; });
     if (vertTravel !== null) { vertTravel = null; render(state.axes.pitch); }

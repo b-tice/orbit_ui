@@ -133,7 +133,12 @@ main.vert { --pitch-w: 360px; grid-template-columns: minmax(0, 1fr) var(--pitch-
 main.vert .axis-panel[data-axis="yaw"] { grid-column: 1 / -1; grid-row: 1; }
 main.vert .axis-panel[data-axis="pitch"] { grid-column: 2; grid-row: 2; }
 main.vert .axis-panel[data-axis="pitch"] .axis-head { gap: 8px 10px; }
+main.vert .axis-panel[data-axis="pitch"] .axis-tools { flex-wrap: wrap; justify-content: flex-start; row-gap: 6px; }
+main.vert .axis-panel[data-axis="pitch"] .seg.route { margin-right: 4px; }
 main.vert .librarian { grid-column: 1; grid-row: 2; }
+/* v1.45: the ORBIT PEDAL panel beside PITCH on the right (David Mash), the Library's height, scrolling inside */
+main.vert #pd-panel.beside { grid-column: 3; grid-row: 2; align-self: stretch; overflow-y: auto; overflow-x: hidden; box-sizing: border-box; min-width: 0; }
+#pedalTab.moved { display: none; }
 /* sub-mode: PITCH to the right of YAW, full height; the Library under YAW */
 main.vert.right { grid-template-columns: minmax(0, 1fr) var(--pitch-w); }
 main.vert.right .axis-panel[data-axis="yaw"] { grid-column: 1; grid-row: 1; }
