@@ -227,9 +227,11 @@ body.gc-tab #progName, body.gc-tab .lib-name { text-transform: none; }
 
 /* v1.47: the pedal readout folds away behind an arrow */
 .pd-diag-box { margin: 0; }
-.pd-diag-box > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; user-select: none; line-height: 1.6; }
+.pd-diag-box > summary + * { margin-top: 2px; }
+.pd-settings { margin-top: 0 !important; }
+.pd-diag-box > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; user-select: none; line-height: 1.5; padding: 2px 0; }
 .pd-diag-box > summary::-webkit-details-marker { display: none; }
 .pd-diag-box > summary::before { content: '▸'; font-size: 11px; opacity: .8; }
 .pd-diag-box[open] > summary::before { content: '▾'; }
-.pd-folds { display: flex; flex-direction: column; gap: 6px; align-items: stretch; margin-top: 4px; }
+.pd-folds { display: flex; flex-direction: column; gap: 2px; align-items: stretch; margin-top: 2px; }
 .pd-folds > details { min-width: 0; }

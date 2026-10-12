@@ -38,6 +38,13 @@
   const connected = () => !!link && link.isConnected();
   function tx(cmd, payload) { if (!connected()) return; link.send(G.encodeFrame(cmd, payload)).catch(err => setStatus(err.message, 'err')); }
   function setStatus(text, cls) { ui.status.textContent = text; ui.status.className = 'gc-status' + (cls ? ' ' + cls : ''); }
+  /* the message line shows a confirmation for a few seconds, then clears (errors stay) */
+  let noteTimer = null;
+  function setNote(text, cls) {
+    ui.note.textContent = text; ui.note.className = 'gc-status' + (cls ? ' ' + cls : '');
+    clearTimeout(noteTimer);
+    if (cls !== 'err' && text) noteTimer = setTimeout(() => { setNote('', ''); }, 4000);
+  }
 
   /* ---- panel ------------------------------------------------------------ */
   const PANEL = 'gc-panel ambient amb-surface amb-chamfer amb-elevation-2 ambx-panel amb-mat-blasted amb-rounded-xl';
@@ -138,11 +145,11 @@
       return;
     }
     if (f.cmd === RSP.DIAG) { const t = new TextDecoder().decode(p); if (t.startsWith('wr ')) diagText2 = t; else diagText = t; diagAt = performance.now(); renderDiag(); return; }
-    if (f.cmd === RSP.PONG) { if (lastPingAt) { ui.note.textContent = `pong · ${(performance.now() - lastPingAt).toFixed(1)} ms`; lastPingAt = 0; } return; }
+    if (f.cmd === RSP.PONG) { if (lastPingAt) { setNote(`pong · ${(performance.now() - lastPingAt).toFixed(1)} ms`, 'ok'); lastPingAt = 0; } return; }
     if (f.cmd === RSP.INFO) { info = decodeInfo(p); renderInfo(); return; }
-    if (f.cmd === RSP.SETTINGS) { settings = decodeSettings(p); renderSettings(); ui.note.textContent = 'settings from the pedal'; if (hooks.onSettings) hooks.onSettings(settings); return; }
-    if (f.cmd === RSP.SAVED) { ui.note.textContent = p[0] ? 'saved to the pedal' : 'save FAILED'; ui.note.className = 'gc-status ' + (p[0] ? 'ok' : 'err'); return; }
-    if (f.cmd === RSP.TARED) { ui.note.textContent = 'tared'; ui.note.className = 'gc-status ok'; return; }
+    if (f.cmd === RSP.SETTINGS) { settings = decodeSettings(p); renderSettings(); setNote('settings from the pedal', ''); if (hooks.onSettings) hooks.onSettings(settings); return; }
+    if (f.cmd === RSP.SAVED) { setNote(p[0] ? 'saved to the pedal' : 'save FAILED', p[0] ? 'ok' : 'err'); return; }
+    if (f.cmd === RSP.TARED) { setNote('tared', ''); ui.note.className = 'gc-status ok'; return; }
   }
   const events = {
     onConnect: () => {
@@ -186,10 +193,10 @@
     ui.disconnect.addEventListener('click', () => link && link.disconnect());
     ui.tare.addEventListener('click', () => tx(CMD.TARE));
     ui.ping.addEventListener('click', () => { lastPingAt = performance.now(); tx(CMD.PING); });
-    ui.restart.addEventListener('click', () => { tx(0x23, new Uint8Array([0x52])); ui.note.textContent = 'pedal restarting…'; });
+    ui.restart.addEventListener('click', () => { tx(0x23, new Uint8Array([0x52])); setNote('pedal restarting…', ''); });
     ui.settings.addEventListener('input', () => setDirty(true));
     ui.settings.addEventListener('change', () => setDirty(true));
-    ui.apply.addEventListener('click', () => { if (!settings) return; tx(CMD.SET_SETTINGS, encodeSettings(readSettings())); ui.note.textContent = 'applied'; ui.note.className = 'gc-status'; });
+    ui.apply.addEventListener('click', () => { if (!settings) return; tx(CMD.SET_SETTINGS, encodeSettings(readSettings())); setNote('applied', ''); });
     ui.save.addEventListener('click', () => { if (dirty) tx(CMD.SET_SETTINGS, encodeSettings(readSettings())); setTimeout(() => tx(CMD.SAVE), 60); });
     setConnectedUi(false);
     if (kind === 'websocket') setTimeout(connect, 50);   /* served by the pedal: its socket is right here */
@@ -203,7 +210,7 @@
     sendTunnel: frame => { if (!connected()) return Promise.reject(new Error('the pedal is not connected')); return link.send(G.encodeFrame(CMD.GC_TUNNEL, frame)); },
     /* any pedal command (the program push, program.js) */
     send: (cmd, payload) => { if (!connected()) return Promise.reject(new Error('the pedal is not connected')); return link.send(G.encodeFrame(cmd, payload || new Uint8Array(0))); },
-    note: (text, cls) => { ui.note.textContent = text; ui.note.className = 'gc-status' + (cls ? ' ' + cls : ''); },
+    note: (text, cls) => setNote(text, cls),
     askGcStatus: () => tx(CMD.GC_STATUS),
     /* push the header's receive channel to the pedal (settings blob v2), keeping the rest as the pedal has it */
     setRxChannel: rx => { if (!settings) return; settings.rxChannel = rx; tx(CMD.SET_SETTINGS, encodeSettings(settings)); setTimeout(() => tx(CMD.SAVE), 60); },
