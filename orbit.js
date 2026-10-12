@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.50';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.51';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -818,6 +818,7 @@ function placeLibrarian() {
   placePedalPanel();
 }
 const VERT_TRAVEL = 880;   /* the strip's travel length upright when nothing else sets it */
+const VERT_TRAVEL_PHONE = 440;   /* on a phone the Library sits below, so nothing bounds the strip: keep it near YAW's scale (Brian, 2026-10-12) */
 const VERT_ROWS = 4;       /* the Library's lists show exactly this many rows upright */
 let vertTravel = null;     /* the travel length that makes PITCH as tall as the Library */
 let matching = false;
@@ -879,7 +880,7 @@ function axisGeom(axis) {
        laid-out frame is the right margin past x1 */
     const pack = packChips(chipLayout(axis, { tx: t => t }).chips, wide - 16);
     const right = 12 + pack.rows * GEO.chipRow + 6;
-    const w = (vertTravel || VERT_TRAVEL) + x0 + right;
+    const w = (vertTravel || (vertPhone() ? VERT_TRAVEL_PHONE : VERT_TRAVEL)) + x0 + right;
     const x1 = w - right, h = wide;
     const y0 = 12, y1 = h - GEO.bottom;
     return {
