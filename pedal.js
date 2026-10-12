@@ -41,14 +41,6 @@
 
   /* ---- panel ------------------------------------------------------------ */
   const PANEL = 'gc-panel ambient amb-surface amb-chamfer amb-elevation-2 ambx-panel amb-mat-blasted amb-rounded-xl';
-  const axisRows = (key, label) => `
-    <div class="pd-axis">
-      <h4>${label}</h4>
-      <label class="polarity"><span class="pol-lbl">send</span><input type="checkbox" data-f="en${key}"><span class="pol-switch"></span></label>
-      <label class="field"><span>CC</span><input type="number" min="0" max="127" inputmode="numeric" data-f="cc${key}"></label>
-      <label class="polarity"><span class="pol-lbl">invert</span><input type="checkbox" data-f="inv${key}"><span class="pol-switch"></span></label>
-      <label class="field"><span>OUT</span><span class="pair"><input type="number" min="0" max="127" inputmode="numeric" data-f="outMin${key}">–<input type="number" min="0" max="127" inputmode="numeric" data-f="outMax${key}"></span></label>
-    </div>`;
   function template() {
     return `
     <section class="${PANEL}" id="pd-panel">
@@ -63,14 +55,11 @@
       </div>
       <div id="pd-diag" style="font-family:var(--mono);font-size:13px;line-height:1.4;color:var(--ink);white-space:pre-wrap;word-break:break-all;padding:4px 0 2px"></div>
       <div class="pd-settings" id="pd-settings" hidden>
-        <div class="gc-help">The MIDI tab and the ANALOG OUT tab are the pedal's mapping: the app pushes them to the pedal as you edit. The channel, CC and window fields below are the fallback for a pedal with no program stored, in DAW mode. Docked on Ground Control it always speaks the fixed link protocol, so nothing here can break that.</div>
         <div class="pd-grid">
-          <label class="field"><span>TRANSMIT CH</span><select data-f="channel">${Array.from({ length: 16 }, (_, i) => `<option value="${i}">${i + 1}</option>`).join('')}</select></label>
-          <label class="polarity"><span class="pol-lbl">tap note</span><input type="checkbox" data-f="tapEnable"><span class="pol-switch"></span></label>
+          <label class="polarity" title="a sharp tap on the pedal sends this note (note on, then off)"><span class="pol-lbl">tap note</span><input type="checkbox" data-f="tapEnable"><span class="pol-switch"></span></label>
           <label class="field"><span>NOTE</span><input type="number" min="0" max="127" inputmode="numeric" data-f="tapNote"></label>
           <label class="polarity" title="the pedal's own WiFi access point — applied at the next power-up"><span class="pol-lbl">WiFi</span><input type="checkbox" data-f="wifiEnable"><span class="pol-switch"></span></label>
         </div>
-        <div class="pd-axes">${axisRows('Pitch', 'PITCH')}${axisRows('Yaw', 'YAW')}</div>
         <div class="gc-row">
           <button class="ghostbtn savebtn" id="pd-apply" type="button" disabled title="send these settings to the pedal (live, until the next power-up)">apply</button>
           <button class="ghostbtn" id="pd-save" type="button" disabled title="store the pedal's live settings in its flash">save to pedal</button>
