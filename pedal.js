@@ -51,7 +51,6 @@
         <button class="ghostbtn" id="pd-tare" type="button" disabled title="take the pedal's current pose as its zero">tare</button>
         <button class="ghostbtn" id="pd-ping" type="button" disabled>ping</button>
         <button class="ghostbtn" id="pd-restart" type="button" disabled title="bench: restart the pedal (tests the unit's recovery)">restart pedal</button>
-        <span class="gc-status" id="pd-info"></span>
       </div>
       <div class="gc-row"><span class="gc-status" id="pd-note"></span></div>
       <div class="pd-folds">
@@ -68,7 +67,8 @@
         </div>
       </details>
       <details class="pd-diag-box" id="pd-diag-box">
-        <summary class="gc-status" title="the pedal's health readout, refreshed every 2 s while connected">diagnostics</summary>
+        <summary class="gc-status" title="firmware, sensors, and the pedal's health readout (refreshed every 2 s while connected)">diagnostics</summary>
+        <div class="gc-status" id="pd-info" style="white-space:normal;padding:4px 0 2px"></div>
         <div id="pd-diag" style="font-family:var(--mono);font-size:12px;line-height:1.4;color:var(--ink);white-space:pre-wrap;word-break:break-all;padding:4px 0 2px"></div>
       </details>
       </div>

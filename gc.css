@@ -226,11 +226,10 @@ body.gc-tab #progName, body.gc-tab .lib-name { text-transform: none; }
 .pop-select:focus { border-color: var(--pt-stroke); }
 
 /* v1.47: the pedal readout folds away behind an arrow */
-.pd-diag-box { margin-top: 6px; }
-.pd-diag-box > summary { cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 6px; user-select: none; }
+.pd-diag-box { margin: 0; }
+.pd-diag-box > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; user-select: none; line-height: 1.6; }
 .pd-diag-box > summary::-webkit-details-marker { display: none; }
 .pd-diag-box > summary::before { content: '▸'; font-size: 11px; opacity: .8; }
 .pd-diag-box[open] > summary::before { content: '▾'; }
-.pd-folds { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
+.pd-folds { display: flex; flex-direction: column; gap: 6px; align-items: stretch; margin-top: 4px; }
 .pd-folds > details { min-width: 0; }
-.pd-folds > details[open] { flex: 1 1 100%; }
