@@ -437,8 +437,8 @@ svg .zone-label { letter-spacing: .08em; }
 
 
 /* v1.53: the axis power button — lit when the axis is on, grey when off (like a DAW effect's power button) */
-.axis-power { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--ink-dim); background: transparent; padding: 0; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; transition: border-color .15s, box-shadow .15s; }
-.axis-power span { width: 9px; height: 9px; border-radius: 50%; background: var(--ink-dim); opacity: .55; transition: background .15s, opacity .15s, box-shadow .15s; }
+.axis-power { position: relative; width: 24px; height: 24px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--ink-dim); background: transparent; padding: 0; margin: 0; cursor: pointer; display: inline-block; flex: 0 0 auto; line-height: 0; transition: border-color .15s, box-shadow .15s; }
+.axis-power span { position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: var(--ink-dim); opacity: .55; transition: background .15s, opacity .15s, box-shadow .15s; }
 .axis-power.on { border-color: #fb923c; box-shadow: 0 0 0 1px rgba(251,146,60,.25), 0 0 10px rgba(251,146,60,.35); }
 .axis-power.on span { background: #fb923c; opacity: 1; box-shadow: 0 0 8px rgba(251,146,60,.8); }
 .axis-power:focus-visible { outline: 2px solid var(--sim); outline-offset: 2px; }
