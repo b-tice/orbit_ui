@@ -28,7 +28,7 @@
     for (const z of zs) {
       const type = Math.max(0, TYPES.indexOf(z.type));
       const lo = u16(z.lo), hi = u16(z.hi);
-      const flags = (z.smooth ? 1 : 0) | (z.exit === 'reset' ? 2 : 0) | (z.action === 'cc' ? 4 : 0) | (z.action === 'freeze' ? 8 : 0);
+      const flags = (z.smooth ? 1 : 0) | (z.exit === 'reset' ? 2 : 0) | (z.action === 'cc' ? 4 : 0) | (z.action === 'freeze' ? 8 : 0) | (z.mode === 'momentary' ? 16 : 0);
       let pts = (z.points || []).slice().sort((a, b) => a.x - b.x);
       if (type !== 0) pts = [];
       else if (pts.length > MAX_POINTS) pts = [pts[0], ...pts.slice(1, -1).slice(0, MAX_POINTS - 2), pts[pts.length - 1]];

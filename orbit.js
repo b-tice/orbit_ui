@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.51';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.52';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -571,7 +571,7 @@ function zoneShortLabel(axis, z) {
   if (z.type === 'switch') {
     const st = simSwitch[z.id] ? ' · ON' : '';
     if (analog) return `⚡ ${toV(z.offVal).toFixed(1)}/${toV(z.onVal).toFixed(1)}V${st}`;
-    if (z.action === 'freeze') return '⚡ FRZ ' + axis.freeze + st;
+    if (z.action === 'freeze') return '⚡ FRZ ' + axis.freeze + (z.mode === 'momentary' ? ' (mom)' : '') + st;
     return '⚡ ' + (z.action === 'cc' ? 'CC' + z.cc : noteName(z.note)) + ' ch' + z.ch + st;
   }
   return analog ? 'CV' : `CH${z.ch} · CC${z.cc}`;
@@ -1032,8 +1032,10 @@ function render(axis) {
     </g>`);
   }
 
-  /* sim marker */
+  /* sim marker — dimmed while the pedal reports this axis frozen (it emits nothing then) */
   const sx = g.tx(axis.sim);
+  const frozen = !!pedalFrozen[axis.key];
+  parts.push(`<g opacity="${frozen ? 0.3 : 1}">`);
   parts.push(`<line x1="${sx}" y1="${g.y0}" x2="${sx}" y2="${g.y1 + 8}" stroke="var(--sim)" stroke-width="1" opacity="0.65" pointer-events="none"/>`);
   for (const z of Z(axis)) {
     if (z.type === 'switch' && switchMasks(z) && axis.sim >= z.lo && axis.sim <= z.hi) {
@@ -1046,6 +1048,7 @@ function render(axis) {
     parts.push(`<circle cx="${sx}" cy="${sy}" r="3.5" fill="var(--sim)" filter="url(#glow-sim-${axis.key})" pointer-events="none"/>`);
   }
   parts.push(`<path d="M${sx - 7} ${g.y1 + 20} L${sx + 7} ${g.y1 + 20} L${sx} ${g.y1 + 9} Z" fill="var(--sim)" filter="url(#glow-sim-${axis.key})" data-role="sim" style="cursor:ew-resize"/>`);
+  parts.push('</g>');
   parts.push(`<rect x="${sx - 16}" y="${g.y1 + 2}" width="32" height="${GEO.bottom - 4}" fill="transparent" data-role="sim" style="cursor:ew-resize"/>`);
 
   if (g.vert) {
@@ -1369,8 +1372,9 @@ function simMove(axis, t, track) {
     if (z.type !== 'switch') continue;
     const wasIn = track.t >= z.lo && track.t <= z.hi;
     const nowIn = t >= z.lo && t <= z.hi;
+    if (z.mode === 'momentary' && wasIn && !nowIn && simSwitch[z.id]) { simSwitch[z.id] = false; simFlash[z.id] = now; setTimeout(() => render(axis), FLASH_MS + 30); }
     if (!wasIn && nowIn && speed >= z.speedMs) {
-      simSwitch[z.id] = !simSwitch[z.id];
+      simSwitch[z.id] = z.mode === 'momentary' ? true : !simSwitch[z.id];
       simFlash[z.id] = now;                                /* glow marks the toggle, on or off */
       setTimeout(() => render(axis), FLASH_MS + 30);       /* then settle to the on/off look */
     }
@@ -1535,14 +1539,19 @@ function openZonePopover(axis, z, cx, cy) {
   } else if (z.type === 'switch') {
     rows = `<div class="pop-row"><label>Action</label>
         <div class="seg"><button class="${!z.action || z.action === 'note' ? 'on' : ''}" data-action="note" type="button">Note</button><button class="${z.action === 'cc' ? 'on' : ''}" data-action="cc" type="button">CC</button><button class="${z.action === 'freeze' ? 'on' : ''}" data-action="freeze" type="button" title="a fast entry latches a freeze of the ${axis.freeze} axis; the next fast entry releases it — MIDI and, docked, the DSP">Freeze ${axis.freeze}</button></div></div>
+      <div class="pop-row"><label>Mode</label>
+        <div class="seg"><button class="${z.mode !== 'momentary' ? 'on' : ''}" data-mode="latch" type="button" title="each fast entry toggles on / off">Latch</button><button class="${z.mode === 'momentary' ? 'on' : ''}" data-mode="momentary" type="button" title="on at the fast entry, off when the pedal leaves the zone">Momentary</button></div></div>
       ${z.action === 'freeze' ? '' : numRow('Transmit ch', 'zch', z.ch, 1, 16)}
       ${z.action === 'cc'
         ? `${numRow('CC #', 'zcc', z.cc, 0, 127)}${numRow('On value', 'zon', z.onVal, 0, 127)}${numRow('Off value', 'zoff', z.offVal, 0, 127)}`
         : z.action === 'freeze' ? ''
         : `${numRow('Note #', 'znote', z.note, 0, 127)}
-           <div class="pop-row"><label>Note</label><span class="pop-note" id="znName">${noteName(z.note)}</span></div>`}
+           <div class="pop-row"><label>Note</label><span class="pop-note" id="znName">${noteName(z.note)}</span></div>
+           ${numRow('Velocity', 'zvel', z.vel, 1, 127)}`}
       ${numRow('Speed m/s', 'zspeed', z.speedMs.toFixed(2), 0.05, 3, 'step="0.05"')}
-      <div class="pop-note">${z.action === 'freeze' ? `a fast entry latches the ${axis.freeze} value where it is (its MIDI, and the DSP while docked); the next fast entry lets it go · slow entry does nothing` : 'a fast entry (faster than Speed) toggles on / off · slow entry does nothing · controllers underneath keep sending'}</div>`;
+      <div class="pop-note">${z.action === 'freeze'
+        ? (z.mode === 'momentary' ? `a fast entry holds the ${axis.freeze} value where it is for as long as the pedal stays in the zone` : `a fast entry latches the ${axis.freeze} value where it is (its MIDI, and the DSP while docked); the next fast entry lets it go · slow entry does nothing`)
+        : (z.mode === 'momentary' ? 'a fast entry (faster than Speed) turns it on; leaving the zone turns it off · slow entry does nothing' : 'a fast entry (faster than Speed) toggles on / off · slow entry does nothing · controllers underneath keep sending')}</div>`;
   } else if (z.type === 'freeze') {
     rows = `<div class="pop-note">while the pedal is in this zone the ${axis.freeze} value is held</div>`;
   } else {
@@ -1569,6 +1578,9 @@ function openZonePopover(axis, z, cx, cy) {
   }));
   pop.querySelectorAll('.swatch').forEach(b => b.addEventListener('click', () => {
     z.color = +b.dataset.color; commit(axis); reopen();
+  }));
+  pop.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => {
+    z.mode = b.dataset.mode; delete simSwitch[z.id]; commit(axis); reopen();
   }));
   pop.querySelectorAll('[data-action]').forEach(b => b.addEventListener('click', () => {
     z.action = b.dataset.action; commit(axis); reopen();
