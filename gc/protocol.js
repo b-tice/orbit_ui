@@ -29,6 +29,7 @@
     PRESET_VALUES: 0x94,       /* [L][D][eff][n][f32 × n]  — the slot's stored value of every parameter of one effect */
     PRESET_THRESH: 0x95,       /* [L][D][axis][eff][par][lo f32][hi f32] — one assigned parameter's sweep */
     PRESET_DUMP_END: 0x96,     /* [L][D] */
+    BYPASS_STATE: 0x97,        /* [yaw][pitch] — the unit's per-axis bypass, on every change */
     PRESET_CURVE: 0x97,        /* [L][D][eff][par][33 × u8] — the response table an assigned parameter uses */
   };
   const nameOf = (table, v) => { for (const k in table) if (table[k] === v) return k; return null; };

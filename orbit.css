@@ -134,7 +134,6 @@ main.vert .axis-panel[data-axis="yaw"] { grid-column: 1 / -1; grid-row: 1; }
 main.vert .axis-panel[data-axis="pitch"] { grid-column: 2; grid-row: 2; }
 main.vert .axis-panel[data-axis="pitch"] .axis-head { gap: 8px 10px; }
 main.vert .axis-panel[data-axis="pitch"] .axis-tools { flex-wrap: wrap; justify-content: flex-start; row-gap: 6px; }
-main.vert .axis-panel[data-axis="pitch"] .seg.route { margin-right: 4px; }
 main.vert .librarian { grid-column: 1; grid-row: 2; }
 /* v1.45: the ORBIT PEDAL panel beside PITCH on the right (David Mash), the Library's height, scrolling inside */
 main.vert #pd-panel.beside { grid-column: 3; grid-row: 2; align-self: stretch; overflow-y: auto; overflow-x: hidden; box-sizing: border-box; min-width: 0; }
@@ -436,6 +435,12 @@ svg .zone-label { letter-spacing: .08em; }
   #popover { width: min(304px, calc(100vw - 20px)); }
 }
 
-/* v1.44: per-axis routing control (MIDI tab header) */
-.seg.route{display:inline-flex;gap:2px;margin-right:8px}
-.seg.route button{font-size:10px;padding:2px 7px;letter-spacing:.06em}
+
+/* v1.53: the axis power button — lit when the axis is on, grey when off (like a DAW effect's power button) */
+.axis-power { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--ink-dim); background: transparent; padding: 0; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; transition: border-color .15s, box-shadow .15s; }
+.axis-power span { width: 9px; height: 9px; border-radius: 50%; background: var(--ink-dim); opacity: .55; transition: background .15s, opacity .15s, box-shadow .15s; }
+.axis-power.on { border-color: #fb923c; box-shadow: 0 0 0 1px rgba(251,146,60,.25), 0 0 10px rgba(251,146,60,.35); }
+.axis-power.on span { background: #fb923c; opacity: 1; box-shadow: 0 0 8px rgba(251,146,60,.8); }
+.axis-power:focus-visible { outline: 2px solid var(--sim); outline-offset: 2px; }
+.axis-panel.axis-off .editor-well { opacity: .38; filter: saturate(.3); transition: opacity .2s, filter .2s; }
+.axis-panel.axis-off .axis-title { opacity: .55; }

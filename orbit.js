@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.52';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.53';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -277,6 +277,8 @@ function migrateAxes(axes, layerOn) {
       }
       if (a.outputs.analog.invert === undefined) a.outputs.analog.invert = false;
       if (a.outputs.midi.route === undefined) a.outputs.midi.route = 'both';   /* v1.44: per-axis routing */
+      if (a.outputs.midi.route === 'midi') a.outputs.midi.route = 'both';      /* v1.53: the 'MIDI only' route is retired — GC off is the unit's bypass now */
+      if (a.outputs.analog.off === undefined) a.outputs.analog.off = false;     /* v1.53: Analog axis power button */
       continue;
     }
     if (a.zones) {           /* v1.8: a single zone set = the MIDI tab */
@@ -678,12 +680,10 @@ function buildPanels() {
     panel.dataset.axis = key;
     panel.innerHTML = `
       <div class="axis-head">
+        <button class="axis-power${axisOn(axis) ? ' on' : ''}" data-power type="button" title="${state.tab === 'gc' ? 'this axis on the Ground Control: off = the unit\'s bypass (the DSP ignores it, its arc freezes) — same as a tap on the unit\'s button' : state.tab === 'analog' ? 'this axis on the jack: off = 0 V' : 'this axis\'s MIDI: off = nothing is sent for it'}"><span></span></button>
         <div class="axis-title"><b>${axis.label}</b><small>${axis.sub}</small></div>
         <div class="axis-out"><span class="amb-led"></span><span data-out></span></div>
         <div class="axis-tools">
-          ${state.tab === 'midi' ? `<div class="seg route" data-route title="where this axis goes while docked on Ground Control: BOTH = the program's MIDI out of the unit's DAW port and the raw axis to the DSP · MIDI = MIDI only, the DSP does not follow this axis · GC = the DSP only, no MIDI from this axis">
-            ${['both', 'midi', 'gc'].map(r => `<button class="${(axis.outputs.midi.route || 'both') === r ? 'on' : ''}" data-r="${r}" type="button">${r.toUpperCase()}</button>`).join('')}
-          </div>` : ''}
           ${state.tab === 'analog' ? `<label class="polarity" title="flip the jack's output: 0→5 V or 5→0 V across the same curve">
             <span class="pol-lbl">Polarity</span>
             <input type="checkbox" data-invert ${axis.outputs.analog.invert ? 'checked' : ''}>
@@ -704,11 +704,12 @@ function buildPanels() {
       flashProgName();
     });
     panel.querySelector('[data-addzone]').addEventListener('click', e => addZone(axis, e.clientX, e.clientY));
-    panel.querySelectorAll('[data-route] button').forEach(b => b.addEventListener('click', () => {
-      axis.outputs.midi.route = b.dataset.r;
-      panel.querySelectorAll('[data-route] button').forEach(x => x.classList.toggle('on', x === b));
-      commit(axis);
-    }));
+    panel.querySelector('[data-power]').addEventListener('click', () => {
+      setAxisOn(axis, !axisOn(axis));
+      panel.querySelector('[data-power]').classList.toggle('on', axisOn(axis));
+      panel.classList.toggle('axis-off', !axisOn(axis));
+    });
+    panel.classList.toggle('axis-off', !axisOn(axis));
     const inv = panel.querySelector('[data-invert]');
     if (inv) inv.addEventListener('change', () => {
       axis.outputs.analog.invert = inv.checked;
@@ -1097,7 +1098,7 @@ function render(axis) {
     if (z.exit === 'reset') m.v = 0;
     idle.push(`${m.label}${fmt(m.v)} ${z.exit === 'reset' ? 'reset' : 'hold'}`);
   }
-  const text = outs.length ? outs.join(' · ') : (idle.length ? idle.join(' · ') : 'DEAD');
+  const text = !axisOn(axis) ? 'OFF' : outs.length ? outs.join(' · ') : (idle.length ? idle.join(' · ') : 'DEAD');
   ed.outEl.textContent = text + (analog && axis.outputs.analog.invert ? '  ⇅' : '') + (pedalFrozen[axis.key] ? '  ❄ HELD' : '');
   if (axis.key === 'yaw') layoutVert();
 }
@@ -1229,7 +1230,8 @@ function axisDirty(axis) {
   const name = (state.names[tab] || 'UNTITLED').toUpperCase().slice(0, 10);
   return name !== f.name || JSON.stringify(Z(axis)) !== JSON.stringify(f.axes[axis.key])
     || (tab === 'analog' && !!axis.outputs.analog.invert !== !!fileInv(f)[axis.key])
-    || (tab === 'midi' && (axis.outputs.midi.route || 'both') !== (fileRoute(f)[axis.key] || 'both'));
+    || (tab === 'midi' && (axis.outputs.midi.route || 'both') !== (fileRoute(f)[axis.key] || 'both'))
+    || (tab === 'analog' && !!axis.outputs.analog.off !== !!fileAnaOff(f)[axis.key]);
 }
 function updateSaveButtons() {
   for (const key of ['yaw', 'pitch']) {
@@ -1662,6 +1664,21 @@ const axesZones = tab => ({ yaw: state.axes.yaw.outputs[tab].zones, pitch: state
 /* analog files also carry each axis's polarity */
 const axesInv = () => ({ yaw: !!state.axes.yaw.outputs.analog.invert, pitch: !!state.axes.pitch.outputs.analog.invert });
 const axesRoute = () => ({ yaw: state.axes.yaw.outputs.midi.route || 'both', pitch: state.axes.pitch.outputs.midi.route || 'both' });
+const axesAnaOff = () => ({ yaw: !!state.axes.yaw.outputs.analog.off, pitch: !!state.axes.pitch.outputs.analog.off });
+const fileAnaOff = f => (f && f.off) || { yaw: false, pitch: false };
+/* the axis power button (Round 5, David Mash): is this axis ON for the current tab?
+   MIDI: route !== 'gc' (gc = the program's MIDI muted) · Analog: !off · GC: the unit's bypass */
+function axisOn(axis) {
+  if (state.tab === 'midi') return (axis.outputs.midi.route || 'both') !== 'gc';
+  if (state.tab === 'analog') return !axis.outputs.analog.off;
+  return !GCTab.bypass()[axis.key];
+}
+function setAxisOn(axis, on) {
+  if (state.tab === 'midi') axis.outputs.midi.route = on ? 'both' : 'gc';
+  else if (state.tab === 'analog') axis.outputs.analog.off = !on;
+  else { GCTab.setBypass(axis.key, !on); render(axis); return; }
+  commit(axis);
+}
 const fileRoute = f => (f && f.route) || { yaw: 'both', pitch: 'both' };
 const fileInv = f => (f && f.inv) || { yaw: false, pitch: false };
 
@@ -1699,6 +1716,7 @@ function saveProgram(asNew, tab) {
   }
   if (tab === 'analog') f.inv = axesInv();
   if (tab === 'midi') f.route = axesRoute();
+  if (tab === 'analog') f.off = axesAnaOff();
   saveState();
   renderLibrarian();
   updateSaveButtons();
@@ -1750,6 +1768,7 @@ function loadFile(id, tab) {
     state.axes[key].outputs[tab].zones = JSON.parse(JSON.stringify(f.axes[key]));
     if (tab === 'analog') state.axes[key].outputs.analog.invert = !!fileInv(f)[key];
     if (tab === 'midi') state.axes[key].outputs.midi.route = fileRoute(f)[key] || 'both';
+    if (tab === 'analog') state.axes[key].outputs.analog.off = !!fileAnaOff(f)[key];
   }
   state.names[tab] = f.name;
   state.loaded[tab] = id;
@@ -2467,6 +2486,7 @@ GCTab.init({
   onParamPick: gcSelectParam,
   onAddZone: gcAddZoneFor,
   onUnmap: gcUnmapParam,
+  onBypass: () => { if (!isGC()) return; for (const key of ['yaw', 'pitch']) { const p = document.querySelector(`.axis-panel[data-axis="${key}"]`); if (!p) continue; const on = axisOn(state.axes[key]); p.querySelector('[data-power]').classList.toggle('on', on); p.classList.toggle('axis-off', !on); render(state.axes[key]); } },
   onDirty: () => updateSaveButtons(),
   onBank: () => { if (isGC()) renderLibrarian(); },
   onLoaded: (id, name) => {

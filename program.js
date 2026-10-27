@@ -44,17 +44,21 @@
     const m = file('midi', sl.midi), a = file('analog', sl.analog);
     const inv = (a && a.inv) || { yaw: false, pitch: false };
     const route = (m && m.route) || { yaw: 'both', pitch: 'both' };
-    const out = [1, (inv.yaw ? 1 : 0) | (inv.pitch ? 2 : 0) | routeBits(route)];
+    const aoff = (a && a.off) || { yaw: false, pitch: false };
+    const out = [1, (inv.yaw ? 1 : 0) | (inv.pitch ? 2 : 0) | routeBits(route) | anaBits(aoff)];
     for (const key of ['yaw', 'pitch']) encodeAxis(m ? (m.axes[key] || []) : [], out);
     for (const key of ['yaw', 'pitch']) encodeAxis(a ? (a.axes[key] || []) : [], out);
     return new Uint8Array(out);
   }
   /* per-axis routing (MIDI tab): 'both' (default) · 'midi' = no raw axis to the unit · 'gc' = no MIDI from the program */
+  /* header flag bits: 2/3 MIDI off (yaw/pitch) · 4/5 raw axis to the unit off (legacy 'MIDI only' route, no longer set by the UI) · 6/7 analog off */
   const routeBits = r => ((r.yaw === 'gc' ? 4 : 0) | (r.pitch === 'gc' ? 8 : 0) | (r.yaw === 'midi' ? 16 : 0) | (r.pitch === 'midi' ? 32 : 0));
+  const anaBits = a => ((a.yaw ? 64 : 0) | (a.pitch ? 128 : 0));
   /* the live state's two outputs → the blob */
   function encode(state) {
     const route = { yaw: state.axes.yaw.outputs.midi.route || 'both', pitch: state.axes.pitch.outputs.midi.route || 'both' };
-    const out = [1, (state.axes.yaw.outputs.analog.invert ? 1 : 0) | (state.axes.pitch.outputs.analog.invert ? 2 : 0) | routeBits(route)];
+    const aoff = { yaw: !!state.axes.yaw.outputs.analog.off, pitch: !!state.axes.pitch.outputs.analog.off };
+    const out = [1, (state.axes.yaw.outputs.analog.invert ? 1 : 0) | (state.axes.pitch.outputs.analog.invert ? 2 : 0) | routeBits(route) | anaBits(aoff)];
     for (const tab of ['midi', 'analog']) for (const key of ['yaw', 'pitch']) encodeAxis(state.axes[key].outputs[tab].zones, out);
     return new Uint8Array(out);
   }

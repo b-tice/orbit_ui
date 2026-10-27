@@ -15,6 +15,7 @@
   const parseId = id => (/^[A-Z]\d$/.test(id || '') ? { L: id.charCodeAt(0) - 65, D: +id[1] } : null);
   const lowestBit = m => { for (let e = 0; e < MAX_E; e++) if (m & (1 << e)) return e; return -1; };
 
+  let bypassState = { yaw: false, pitch: false };   /* the unit's per-axis bypass (BYPASS_STATE) */
   let hooks = {}, ui = {}, link = null, linkKind = 'sim', sim = null;
   let lastApplied = [new Map(), new Map()];   /* per axis: 'eff,par' → { lo, hi, lut } — what the strips drive */
   const IDENTITY = Array.from({ length: C.LUT_N }, (_, i) => Math.round(i * 255 / (C.LUT_N - 1)));
@@ -850,6 +851,7 @@
     if (f.cmd === R.PRESET_MASKS) { handlePresetMasks(f.payload); return; }
     if (f.cmd === R.LIST_END) { handleListEnd(); return; }
     if (f.cmd === R.LOADED) { handleLoaded(f.payload); return; }
+    if (f.cmd === R.BYPASS_STATE) { if (f.payload.length >= 2) { bypassState = { yaw: !!f.payload[0], pitch: !!f.payload[1] }; if (hooks.onBypass) hooks.onBypass(bypassState); } return; }
     if (f.cmd === R.PRESET_VALUES || f.cmd === R.PRESET_THRESH || f.cmd === R.PRESET_CURVE || f.cmd === R.PRESET_DUMP_END) { handleDumpFrame(f); return; }
     if (f.cmd === CMD.SET_THRESH) {
       if (f.payload.length >= 10) {
@@ -1058,6 +1060,8 @@
   }
 
   window.GCTab = {
+    /* Round 5: the unit's per-axis bypass = the app's GC-tab power buttons */
+    bypass: () => bypassState, setBypass: (axisKey, off) => { if (!connected()) return; send(G.frames.setBypass(axisKey === 'yaw' ? 0 : 1, off)); bypassState = { ...bypassState, [axisKey]: !!off }; },
     init, setLinkKind, linkKind: () => linkKind, connect, disconnect, isConnected: connected,
     bank, active: () => activePreset, activeId: () => (activeSlot ? G.slotLabel(activeSlot.letter, activeSlot.digit) : null),
     load, rename, renameSlot, save, saveNew, remove, refreshBank, nameOf, describe, idOf, parseId, log,
