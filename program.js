@@ -16,6 +16,7 @@
   const NO_GC = 0xff;
   const TYPES = ['ctl', 'note', 'switch', 'freeze', 'dead'];
   const MAX_ZONES = 8, MAX_POINTS = 8, CHUNK = 150;
+  const MAX_EXTRA = 15, MAX_EXTRA_TOTAL = 64;   /* Round 6: extra (channel, CC) targets per Controller zone / per program */
 
   const u16 = v => Math.max(0, Math.min(65535, Math.round(v * 65535)));
   const c7 = v => Math.max(0, Math.min(127, Math.round(+v || 0)));
@@ -49,7 +50,29 @@
     for (const key of ['yaw', 'pitch']) encodeAxis(m ? (m.axes[key] || []) : [], out);
     for (const key of ['yaw', 'pitch']) encodeAxis(a ? (a.axes[key] || []) : [], out);
     encodeCtl([m && m.ctl, a && a.ctl, m && m.gcCtl], out);
+    encodeTargets([m ? (m.axes.yaw || []) : [], m ? (m.axes.pitch || []) : []], out);
     return new Uint8Array(out);
+  }
+  /* Round 6: a Controller zone's extra targets beyond its own ch/cc — section [0x7D][n] + n × [axis][zone][nT][ch 0-15][cc] */
+  function zoneExtra(z) {
+    if (z.type !== 'ctl' || !Array.isArray(z.targets)) return [];
+    const seen = new Set([`${z.ch}:${z.cc}`]), out = [];
+    for (const t of z.targets) for (const cc of (t.ccs || [])) {
+      const k = `${t.ch}:${cc}`; if (seen.has(k)) continue; seen.add(k);
+      out.push({ ch: Math.max(1, Math.min(16, t.ch | 0)), cc: cc & 127 });
+    }
+    return out.slice(0, MAX_EXTRA);
+  }
+  function encodeTargets(axesZones, out) {
+    const entries = [];
+    let total = 0;
+    axesZones.forEach((zones, a) => zones.slice(0, MAX_ZONES).forEach((z, zi) => {
+      const x = zoneExtra(z).slice(0, Math.max(0, MAX_EXTRA_TOTAL - total));
+      if (x.length) { entries.push({ a, zi, x }); total += x.length; }
+    }));
+    if (!entries.length) return;
+    out.push(0x7d, entries.length);
+    for (const e of entries) { out.push(e.a, e.zi, e.x.length); for (const t of e.x) out.push((t.ch - 1) & 15, t.cc); }
   }
   /* power-button MIDI control (Round 5 step 3): trailer [0x7E] + [cc, on, off] × (MIDI, Analog, GC) × (yaw, pitch); cc 0x7F = none */
   function encodeCtl(perOutput, out) {
@@ -72,6 +95,7 @@
     for (const tab of ['midi', 'analog']) for (const key of ['yaw', 'pitch']) encodeAxis(state.axes[key].outputs[tab].zones, out);
     const ctlOf = tab => ({ yaw: state.axes.yaw.outputs[tab] && state.axes.yaw.outputs[tab].ctl, pitch: state.axes.pitch.outputs[tab] && state.axes.pitch.outputs[tab].ctl });
     encodeCtl([ctlOf('midi'), ctlOf('analog'), ctlOf('gc')], out);
+    encodeTargets([state.axes.yaw.outputs.midi.zones, state.axes.pitch.outputs.midi.zones], out);
     return new Uint8Array(out);
   }
   /* blob → plain object (verification / read-back) */
@@ -92,9 +116,21 @@
     };
     const o = { invert: { yaw: !!(b[1] & 1), pitch: !!(b[1] & 2) }, midi: {}, analog: {} };
     o.midi.yaw = axis(); o.midi.pitch = axis(); o.analog.yaw = axis(); o.analog.pitch = axis();
-    if (b.length - i >= 19 && b[i] === 0x7e) {
-      i++; o.ctl = {};
-      for (const tab of ['midi', 'analog', 'gc']) { o.ctl[tab] = {}; for (const key of ['yaw', 'pitch']) { o.ctl[tab][key] = { cc: b[i] === 0x7f ? null : b[i], on: b[i + 1], off: b[i + 2] }; i += 3; } }
+    while (i < b.length) {
+      if (b[i] === 0x7e && b.length - i >= 19) {
+        i++; o.ctl = {};
+        for (const tab of ['midi', 'analog', 'gc']) { o.ctl[tab] = {}; for (const key of ['yaw', 'pitch']) { o.ctl[tab][key] = { cc: b[i] === 0x7f ? null : b[i], on: b[i + 1], off: b[i + 2] }; i += 3; } }
+      } else if (b[i] === 0x7d && b.length - i >= 2) {
+        const n = b[i + 1]; i += 2;
+        for (let e = 0; e < n; e++) {
+          if (b.length - i < 3) return null;
+          const a = b[i], zi = b[i + 1], nT = b[i + 2]; i += 3;
+          if (b.length - i < 2 * nT) return null;
+          const zones = a === 0 ? o.midi.yaw : o.midi.pitch, z = zones[zi];
+          if (z) z.extra = Array.from({ length: nT }, (_, k) => ({ ch: b[i + 2 * k] + 1, cc: b[i + 2 * k + 1] }));
+          i += 2 * nT;
+        }
+      } else return null;
     }
     return i === b.length ? o : null;
   }

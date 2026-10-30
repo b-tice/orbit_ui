@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.56';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.57';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -109,6 +109,7 @@ function mkZone(type, lo, hi, extra) {
        exit: what the output does when the pedal LEAVES the zone —
        'hold' keeps the last value, 'reset' drops it to zero */
     ch: 1, cc: 1, smooth: false, exit: 'hold',
+    targets: [{ ch: 1, ccs: [1] }],   /* Round 6: MIDI Controller routing — channel tabs, each with its CCs (z.ch/z.cc mirror the first) */
     eff: 0, par: 0,                 /* Ground Control: the effect + parameter this zone drives */
     points: [{ x: lo, y: 0 }, { x: hi, y: 127 }],
     /* note + switch */
@@ -274,6 +275,7 @@ function migrateAxes(axes, layerOn) {
       for (const tab of ['midi', 'analog']) for (const z of a.outputs[tab].zones) {
         if (z.speedMs === undefined) z.speedMs = DEFAULT_SWITCH_MS;
         if (z.exit === undefined) z.exit = 'hold';
+        if (tab === 'midi') normalizeTargets(z);                                  /* v1.57: one curve → many (channel, CC) targets */
       }
       if (a.outputs.analog.invert === undefined) a.outputs.analog.invert = false;
       if (a.outputs.midi.route === undefined) a.outputs.midi.route = 'both';   /* v1.44: per-axis routing */
@@ -428,8 +430,31 @@ const zonesAt = (axis, t) => Z(axis).filter(z => t >= z.lo - 1e-9 && t <= z.hi +
    same transmit channel AND CC they would fight over one controller, so
    the topmost (narrowest) one wins in the overlap and the other goes quiet. */
 /* same target: MIDI = same channel + CC · analog = same jack */
+/* Round 6 (David Mash): a MIDI Controller zone routes its curve to a list of channels, each with a list of CCs.
+   z.targets = [{ ch: 1-16, ccs: [n, …] }, …]; z.ch / z.cc mirror the first pair (chips, legacy code, blob primary). */
+function normalizeTargets(z) {
+  if (!Array.isArray(z.targets) || !z.targets.length) z.targets = [{ ch: z.ch || 1, ccs: [z.cc === undefined ? 1 : z.cc] }];
+  for (const t of z.targets) { t.ch = Math.max(1, Math.min(16, t.ch | 0)); t.ccs = (t.ccs || []).map(c => Math.max(0, Math.min(127, c | 0))); if (!t.ccs.length) t.ccs = [z.cc === undefined ? 1 : z.cc]; }
+  z.ch = z.targets[0].ch; z.cc = z.targets[0].ccs[0];
+}
+const zonePairs = z => {
+  if (z.type !== 'ctl' || state.tab !== 'midi') return [`${z.ch}:${z.cc}`];
+  const s = new Set([`${z.ch}:${z.cc}`]); for (const t of (z.targets || [])) for (const c of (t.ccs || [])) s.add(`${t.ch}:${c}`); return [...s];
+};
+const targetCount = z => zonePairs(z).length;
+/* chip summary: "CH1 · CC1", "CH1–5 · CC1", "CH1 · CC1,7", "3 CH · 4 CC" */
+function targetSummary(z) {
+  const ts = (z.targets && z.targets.length) ? z.targets : [{ ch: z.ch, ccs: [z.cc] }];
+  const chs = [...new Set(ts.map(t => t.ch))].sort((a, b) => a - b);
+  const ccs = [...new Set(ts.flatMap(t => t.ccs))].sort((a, b) => a - b);
+  const consecutive = chs.every((c, i) => !i || c === chs[i - 1] + 1);
+  const chTxt = chs.length === 1 ? `CH${chs[0]}` : (consecutive && chs.length > 2) ? `CH${chs[0]}–${chs[chs.length - 1]}` : chs.length <= 3 ? 'CH' + chs.join(',') : `${chs.length} CH`;
+  const sameSet = ts.every(t => t.ccs.length === ccs.length && t.ccs.every(c => ccs.includes(c)));
+  const ccTxt = ccs.length === 1 ? `CC${ccs[0]}` : (sameSet && ccs.length <= 3) ? 'CC' + ccs.join(',') : `${ts.reduce((n, t) => n + t.ccs.length, 0)} CC`;
+  return `${chTxt} · ${ccTxt}`;
+}
 const sameCC = (a, b) => a.type === 'ctl' && b.type === 'ctl'
-  && (state.tab === 'analog' || (isGC() ? (a.eff === b.eff && a.par === b.par) : (a.ch === b.ch && a.cc === b.cc)));
+  && (state.tab === 'analog' || (isGC() ? (a.eff === b.eff && a.par === b.par) : zonePairs(a).some(p => zonePairs(b).includes(p))));
 const overlaps = (a, b) => a.hi > b.lo && a.lo < b.hi;
 function isAbove(axis, a, b) {           /* is a drawn on top of b? */
   const o = drawOrder(axis);
@@ -578,7 +603,7 @@ function zoneShortLabel(axis, z) {
     if (z.action === 'freeze') return '⚡ FRZ ' + axis.freeze + (z.mode === 'momentary' ? ' (mom)' : '') + st;
     return '⚡ ' + (z.action === 'cc' ? 'CC' + z.cc : noteName(z.note)) + ' ch' + z.ch + st;
   }
-  return analog ? 'CV' : `CH${z.ch} · CC${z.cc}`;
+  return analog ? 'CV' : targetSummary(z);
 }
 
 /* what a zone does at the sim marker (null = nothing) */
@@ -588,7 +613,7 @@ function zoneOutput(axis, z, t) {
     if (!ctlActive(axis, z, t)) return null;
     const v = curveValue(z, t);
     if (isGC()) return `${gcDef(z).name} ${gcFormat(z, v)}`;
-    return analog ? `${jackV(axis, v).toFixed(2)}V` : `CC${z.cc} ch${z.ch}=${Math.round(v)}`;
+    return analog ? `${jackV(axis, v).toFixed(2)}V` : `${targetCount(z) > 1 ? targetSummary(z) : `CC${z.cc} ch${z.ch}`}=${Math.round(v)}`;
   }
   if (z.type === 'freeze') return `FRZ ${axis.freeze}`;
   if (z.type === 'note') return `♪${noteName(z.note)} ch${z.ch} v${z.vel}`;
@@ -1506,6 +1531,54 @@ function openPointPopover(axis, zid, idx, cx, cy) {
   if (del) del.addEventListener('click', () => { z.points.splice(idx, 1); closePopover(); commit(axis); });
 }
 
+/* ── Round 6: routing tabs in a MIDI Controller zone's popover ─────────────
+   one tab per output channel (+ adds a channel), the tab's body lists its CCs (+ CC adds one) */
+const routingTab = {};   /* zone id → index of the open channel tab */
+function routingHtml(z) {
+  normalizeTargets(z);
+  const sel = Math.min(routingTab[z.id] || 0, z.targets.length - 1);
+  const used = new Set(z.targets.map(t => t.ch));
+  const tabs = z.targets.map((t, i) => `<button class="rt-tab${i === sel ? ' on' : ''}" data-rtab="${i}" type="button" title="channel ${t.ch}: ${t.ccs.length} CC${t.ccs.length === 1 ? '' : 's'}">CH ${t.ch}</button>`).join('')
+    + (z.targets.length < 16 ? `<button class="rt-tab rt-add" data-rtab-add type="button" title="add an output channel">+</button>` : '');
+  const t = z.targets[sel];
+  const chOpts = Array.from({ length: 16 }, (_, i) => i + 1).map(c => `<option value="${c}"${c === t.ch ? ' selected' : ''}${used.has(c) && c !== t.ch ? ' disabled' : ''}>${c}</option>`).join('');
+  const ccs = t.ccs.map((c, i) => `<span class="rt-cc"><input type="number" inputmode="numeric" min="0" max="127" value="${c}" data-rtcc="${i}" title="CC number">${t.ccs.length > 1 ? `<button type="button" data-rtcc-del="${i}" title="remove this CC">×</button>` : ''}</span>`).join('');
+  const total = targetCount(z);
+  return `<div class="rt"><div class="rt-tabs">${tabs}</div>
+    <div class="rt-body">
+      <div class="pop-row"><label>Channel</label><span class="rt-chrow"><select id="rt-ch" class="pop-select">${chOpts}</select>${z.targets.length > 1 ? `<button class="ghostbtn" type="button" data-rtab-del title="remove this channel and its CCs">remove</button>` : ''}</span></div>
+      <div class="pop-row"><label>CC #</label><span class="rt-ccs">${ccs}${total < 16 && t.ccs.length < 16 ? `<button type="button" class="rt-addcc" data-rtcc-add title="add a CC on this channel">+ CC</button>` : ''}</span></div>
+    </div>
+    <div class="pop-note">${total === 1 ? 'the curve goes out on this channel and CC' : `the same curve goes out to ${total} targets · ${targetSummary(z)}`}${total >= 16 ? ' · 16 is the limit' : ''}</div></div>`;
+}
+function wireRouting(axis, z, reopen) {
+  const rt = pop.querySelector('.rt');
+  if (!rt) return;
+  const sel = Math.min(routingTab[z.id] || 0, z.targets.length - 1), t = z.targets[sel];
+  const done = () => { normalizeTargets(z); commit(axis); reopen(); };
+  rt.querySelectorAll('[data-rtab]').forEach(b => b.addEventListener('click', () => { routingTab[z.id] = +b.dataset.rtab; reopen(); }));
+  const add = rt.querySelector('[data-rtab-add]');
+  if (add) add.addEventListener('click', () => {
+    const used = new Set(z.targets.map(x => x.ch));
+    let ch = t.ch; for (let k = 1; k <= 16 && used.has(ch); k++) ch = (t.ch - 1 + k) % 16 + 1;
+    if (used.has(ch)) return;
+    z.targets.push({ ch, ccs: t.ccs.slice(0, 1) });   /* same first CC on the new channel — the "CC1 on channels 1–5" case */
+    routingTab[z.id] = z.targets.length - 1; done();
+  });
+  const del = rt.querySelector('[data-rtab-del]');
+  if (del) del.addEventListener('click', () => { z.targets.splice(sel, 1); routingTab[z.id] = Math.max(0, sel - 1); done(); });
+  const chSel = rt.querySelector('#rt-ch');
+  if (chSel) chSel.addEventListener('change', () => { t.ch = clampi(+chSel.value, 1, 16); done(); });
+  rt.querySelectorAll('[data-rtcc]').forEach(inp => inp.addEventListener('change', () => { const v = parseInt(inp.value, 10); if (!isNaN(v)) { t.ccs[+inp.dataset.rtcc] = clampi(v, 0, 127); done(); } }));
+  rt.querySelectorAll('[data-rtcc-del]').forEach(b => b.addEventListener('click', () => { t.ccs.splice(+b.dataset.rtccDel, 1); done(); }));
+  const addCc = rt.querySelector('[data-rtcc-add]');
+  if (addCc) addCc.addEventListener('click', () => {
+    let cc = (t.ccs[t.ccs.length - 1] + 1) & 127; while (t.ccs.includes(cc)) cc = (cc + 1) & 127;
+    t.ccs.push(cc); done();
+    const last = pop.querySelector(`[data-rtcc="${t.ccs.length - 1}"]`); if (last) { last.focus(); last.select(); }
+  });
+}
+
 function openZonePopover(axis, z, cx, cy) {
   const col = colorOf(z);
   const analog = state.tab === 'analog';
@@ -1531,8 +1604,7 @@ function openZonePopover(axis, z, cx, cy) {
       <div class="pop-note">drag the end points to set the sweep range in ${d.name}'s own units · double-click the curve to add points · outside the zone the unit holds the nearer end</div>
       ${ccConflict(axis, z) ? `<div class="pop-note warn">overlaps another zone on the same parameter — where they overlap only the topmost (narrowest) one drives it</div>` : ''}`;
   } else if (z.type === 'ctl') {
-    rows = `${analog ? '' : `${numRow('Transmit ch', 'zch', z.ch, 1, 16)}
-      ${numRow('CC #', 'zcc', z.cc, 0, 127)}`}
+    rows = `${analog ? '' : routingHtml(z)}
       <div class="pop-row"><label>Response curve</label>
         <button class="ghostbtn ${z.smooth ? 'on' : ''}" id="zsmooth" type="button" title="linear ↔ smooth (monotone cubic) interpolation between the points">smooth</button></div>
       <div class="pop-row"><label>On exit</label>
@@ -1620,8 +1692,9 @@ function openZonePopover(axis, z, cx, cy) {
     commit(axis); reopen();
   });
   if (zpar) zpar.addEventListener('change', () => { z.par = +zpar.value; commit(axis); reopen(); });
-  wireNum(axis, 'zch', v => { z.ch = clampi(v, 1, 16); });
-  wireNum(axis, 'zcc', v => { z.cc = clampi(v, 0, 127); });
+  wireNum(axis, 'zch', v => { z.ch = clampi(v, 1, 16); if (z.type === 'ctl') { normalizeTargets(z); z.targets[0].ch = z.ch; } });
+  wireNum(axis, 'zcc', v => { z.cc = clampi(v, 0, 127); if (z.type === 'ctl') { normalizeTargets(z); z.targets[0].ccs[0] = z.cc; } });
+  wireRouting(axis, z, reopen);
   wireNum(axis, 'zvel', v => { z.vel = clampi(v, 1, 127); });
   wireNum(axis, 'zon', v => { z.onVal = clampi(v, 0, 127); });
   wireNum(axis, 'zoff', v => { z.offVal = clampi(v, 0, 127); });
@@ -1698,7 +1771,7 @@ function openPowerPopover(axis, cx, cy) {
     </div>
     <div class="pop-note">A CC on the Receive Channel flips this button: on value → on, off value → off (other values: 64 and up = on). Pedal-alone or docked. Never echoed out. Saved with the ${state.tab === 'gc' ? 'MIDI' : what} Setup.</div>`, cx, cy);
   const t = state.tab;
-  const set = (k, v) => { axis.outputs[t].ctl = { ...ctlOf(axis.outputs[t].ctl), [k]: v }; commit(axis); updateSaveButtons(); };
+  const set = (k, v) => { axis.outputs[t].ctl = { ...ctlOf(axis.outputs[t].ctl), [k]: v }; commit(axis); if (isGC()) OrbitProgram.schedule(state, false); updateSaveButtons(); };
   const ccEl = pop.querySelector('#ctl-cc');
   ccEl.addEventListener('input', () => { const v = parseInt(ccEl.value, 10); set('cc', isNaN(v) ? null : Math.max(0, Math.min(127, v))); });
   wireNum(axis, 'ctl-on', v => set('on', Math.max(0, Math.min(127, Math.round(v)))));
