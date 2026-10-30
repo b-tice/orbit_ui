@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.57';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.58';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -1542,12 +1542,13 @@ function routingHtml(z) {
     + (z.targets.length < 16 ? `<button class="rt-tab rt-add" data-rtab-add type="button" title="add an output channel">+</button>` : '');
   const t = z.targets[sel];
   const chOpts = Array.from({ length: 16 }, (_, i) => i + 1).map(c => `<option value="${c}"${c === t.ch ? ' selected' : ''}${used.has(c) && c !== t.ch ? ' disabled' : ''}>${c}</option>`).join('');
-  const ccs = t.ccs.map((c, i) => `<span class="rt-cc"><input type="number" inputmode="numeric" min="0" max="127" value="${c}" data-rtcc="${i}" title="CC number">${t.ccs.length > 1 ? `<button type="button" data-rtcc-del="${i}" title="remove this CC">×</button>` : ''}</span>`).join('');
+  const ccs = t.ccs.map((c, i) => `<div class="pop-row rt-cc"><label>CC ${i + 1}</label><span class="rt-ccrow"><input type="number" inputmode="numeric" min="0" max="127" value="${c}" data-rtcc="${i}" title="CC number">${t.ccs.length > 1 ? `<button class="ghostbtn" type="button" data-rtcc-del="${i}" title="remove this CC from channel ${t.ch}">remove</button>` : '<span class="rt-spacer"></span>'}</span></div>`).join('');
   const total = targetCount(z);
   return `<div class="rt"><div class="rt-tabs">${tabs}</div>
     <div class="rt-body">
-      <div class="pop-row"><label>Channel</label><span class="rt-chrow"><select id="rt-ch" class="pop-select">${chOpts}</select>${z.targets.length > 1 ? `<button class="ghostbtn" type="button" data-rtab-del title="remove this channel and its CCs">remove</button>` : ''}</span></div>
-      <div class="pop-row"><label>CC #</label><span class="rt-ccs">${ccs}${total < 16 && t.ccs.length < 16 ? `<button type="button" class="rt-addcc" data-rtcc-add title="add a CC on this channel">+ CC</button>` : ''}</span></div>
+      <div class="pop-row"><label>Channel</label><span class="rt-chrow"><select id="rt-ch" class="pop-select">${chOpts}</select>${z.targets.length > 1 ? `<button class="ghostbtn" type="button" data-rtab-del title="remove this channel and its CCs">remove</button>` : '<span class="rt-spacer"></span>'}</span></div>
+      ${ccs}
+      ${total < 16 && t.ccs.length < 16 ? `<div class="pop-row"><label></label><button type="button" class="rt-addcc" data-rtcc-add title="add a CC on channel ${t.ch}">+ CC</button></div>` : ''}
     </div>
     <div class="pop-note">${total === 1 ? 'the curve goes out on this channel and CC' : `the same curve goes out to ${total} targets · ${targetSummary(z)}`}${total >= 16 ? ' · 16 is the limit' : ''}</div></div>`;
 }
@@ -1569,7 +1570,11 @@ function wireRouting(axis, z, reopen) {
   if (del) del.addEventListener('click', () => { z.targets.splice(sel, 1); routingTab[z.id] = Math.max(0, sel - 1); done(); });
   const chSel = rt.querySelector('#rt-ch');
   if (chSel) chSel.addEventListener('change', () => { t.ch = clampi(+chSel.value, 1, 16); done(); });
-  rt.querySelectorAll('[data-rtcc]').forEach(inp => inp.addEventListener('change', () => { const v = parseInt(inp.value, 10); if (!isNaN(v)) { t.ccs[+inp.dataset.rtcc] = clampi(v, 0, 127); done(); } }));
+  rt.querySelectorAll('[data-rtcc]').forEach(inp => inp.addEventListener('input', () => {
+    const v = parseInt(inp.value, 10); if (isNaN(v)) return;
+    t.ccs[+inp.dataset.rtcc] = clampi(v, 0, 127); normalizeTargets(z); commit(axis);   /* no reopen while typing: keep the caret */
+    const note = rt.querySelector('.pop-note'); if (note) note.textContent = `the same curve goes out to ${targetCount(z)} targets · ${targetSummary(z)}`;
+  }));
   rt.querySelectorAll('[data-rtcc-del]').forEach(b => b.addEventListener('click', () => { t.ccs.splice(+b.dataset.rtccDel, 1); done(); }));
   const addCc = rt.querySelector('[data-rtcc-add]');
   if (addCc) addCc.addEventListener('click', () => {

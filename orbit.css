@@ -453,10 +453,8 @@ svg .zone-label { letter-spacing: .08em; }
 .rt-tab.rt-add { padding: 4px 7px; font-size: 11px; line-height: 1; }
 .rt-body { display: grid; gap: 9px; }
 .rt-chrow { display: flex; align-items: center; gap: 8px; }
-.rt-ccs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; max-width: 210px; }
-.rt-cc { display: inline-flex; align-items: center; gap: 2px; }
-.rt-cc input { width: 46px; }
-.rt-cc button { font-size: 11px; line-height: 1; color: var(--ink-dim); background: transparent; border: none; cursor: pointer; padding: 2px 4px; }
-.rt-cc button:hover { color: var(--warn); }
+.rt-ccrow { display: flex; align-items: center; gap: 8px; }
+.rt-ccrow input { width: 56px; }
+.rt-spacer { display: inline-block; width: 62px; }
 .rt-addcc { font-family: inherit; font-size: 8px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-dim); background: var(--well); border: 1px dashed var(--well-line); border-radius: 6px; padding: 4px 8px; cursor: pointer; }
 .rt-addcc:hover { color: var(--ink); border-color: var(--span-edge); }
