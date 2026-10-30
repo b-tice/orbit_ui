@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.55';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.56';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -279,6 +279,8 @@ function migrateAxes(axes, layerOn) {
       if (a.outputs.midi.route === undefined) a.outputs.midi.route = 'both';   /* v1.44: per-axis routing */
       if (a.outputs.midi.route === 'midi') a.outputs.midi.route = 'both';      /* v1.53: the 'MIDI only' route is retired — GC off is the unit's bypass now */
       if (a.outputs.analog.off === undefined) a.outputs.analog.off = false;     /* v1.53: Analog axis power button */
+      if (!a.outputs.gc) a.outputs.gc = {};                                      /* v1.56: the GC power button's MIDI control lives here */
+      for (const t of ['midi', 'analog', 'gc']) if (!a.outputs[t].ctl) a.outputs[t].ctl = defaultCtl();
       continue;
     }
     if (a.zones) {           /* v1.8: a single zone set = the MIDI tab */
@@ -680,7 +682,7 @@ function buildPanels() {
     panel.dataset.axis = key;
     panel.innerHTML = `
       <div class="axis-head">
-        <button class="axis-power${axisOn(axis) ? ' on' : ''}" data-power type="button" title="${state.tab === 'gc' ? 'this axis on the Ground Control: off = the unit\'s bypass (the DSP ignores it, its arc freezes) — same as a tap on the unit\'s button' : state.tab === 'analog' ? 'this axis on the jack: off = 0 V' : 'this axis\'s MIDI: off = nothing is sent for it'}"><span></span></button>
+        <button class="axis-power${axisOn(axis) ? ' on' : ''}" data-power type="button" title="${state.tab === 'gc' ? 'this axis on the Ground Control: off = the unit\'s bypass (the DSP ignores it, its arc freezes) — same as a tap on the unit\'s button' : state.tab === 'analog' ? 'this axis on the jack: off = 0 V' : 'this axis\'s MIDI: off = nothing is sent for it'} · hold or right-click: MIDI control (CC)"><span></span></button>
         <div class="axis-title"><b>${axis.label}</b><small>${axis.sub}</small></div>
         <div class="axis-out"><span class="amb-led"></span><span data-out></span></div>
         <div class="axis-tools">
@@ -704,11 +706,19 @@ function buildPanels() {
       flashProgName();
     });
     panel.querySelector('[data-addzone]').addEventListener('click', e => addZone(axis, e.clientX, e.clientY));
-    panel.querySelector('[data-power]').addEventListener('click', () => {
-      setAxisOn(axis, !axisOn(axis));
-      panel.querySelector('[data-power]').classList.toggle('on', axisOn(axis));
-      panel.classList.toggle('axis-off', !axisOn(axis));
-    });
+    {
+      const pw = panel.querySelector('[data-power]');
+      let holdT = null, held = false;
+      pw.addEventListener('click', () => {
+        if (held) { held = false; return; }
+        setAxisOn(axis, !axisOn(axis));
+        pw.classList.toggle('on', axisOn(axis));
+        panel.classList.toggle('axis-off', !axisOn(axis));
+      });
+      pw.addEventListener('pointerdown', e => { clearTimeout(holdT); holdT = setTimeout(() => { held = true; openPowerPopover(axis, e.clientX, e.clientY); }, 450); });
+      for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) pw.addEventListener(ev, () => clearTimeout(holdT));
+      pw.addEventListener('contextmenu', e => { e.preventDefault(); clearTimeout(holdT); openPowerPopover(axis, e.clientX, e.clientY); });
+    }
     panel.classList.toggle('axis-off', !axisOn(axis));
     const inv = panel.querySelector('[data-invert]');
     if (inv) inv.addEventListener('change', () => {
@@ -1231,7 +1241,9 @@ function axisDirty(axis) {
   return name !== f.name || JSON.stringify(Z(axis)) !== JSON.stringify(f.axes[axis.key])
     || (tab === 'analog' && !!axis.outputs.analog.invert !== !!fileInv(f)[axis.key])
     || (tab === 'midi' && (axis.outputs.midi.route || 'both') !== (fileRoute(f)[axis.key] || 'both'))
-    || (tab === 'analog' && !!axis.outputs.analog.off !== !!fileAnaOff(f)[axis.key]);
+    || (tab === 'analog' && !!axis.outputs.analog.off !== !!fileAnaOff(f)[axis.key])
+    || JSON.stringify(ctlOf(axis.outputs[tab].ctl)) !== JSON.stringify(ctlOf(fileCtl(f)[axis.key]))
+    || (tab === 'midi' && JSON.stringify(ctlOf(axis.outputs.gc.ctl)) !== JSON.stringify(ctlOf(fileGcCtl(f)[axis.key])));
 }
 function updateSaveButtons() {
   for (const key of ['yaw', 'pitch']) {
@@ -1666,6 +1678,32 @@ const axesInv = () => ({ yaw: !!state.axes.yaw.outputs.analog.invert, pitch: !!s
 const axesRoute = () => ({ yaw: state.axes.yaw.outputs.midi.route || 'both', pitch: state.axes.pitch.outputs.midi.route || 'both' });
 const axesAnaOff = () => ({ yaw: !!state.axes.yaw.outputs.analog.off, pitch: !!state.axes.pitch.outputs.analog.off });
 const fileAnaOff = f => (f && f.off) || { yaw: false, pitch: false };
+/* power-button MIDI control (Round 5 step 3): { cc: null|0..127, on, off } per axis per output.
+   Saved with the output's Setup; the GC button's control rides with the MIDI Setup (the pedal listens for all three). */
+const defaultCtl = () => ({ cc: null, on: 127, off: 0 });
+const ctlOf = c => ({ cc: (c && c.cc !== undefined && c.cc !== null && c.cc !== '') ? +c.cc : null, on: c && c.on !== undefined ? +c.on : 127, off: c && c.off !== undefined ? +c.off : 0 });
+const axesCtl = tab => ({ yaw: ctlOf(state.axes.yaw.outputs[tab].ctl), pitch: ctlOf(state.axes.pitch.outputs[tab].ctl) });
+const fileCtl = f => (f && f.ctl) || { yaw: defaultCtl(), pitch: defaultCtl() };
+const fileGcCtl = f => (f && f.gcCtl) || { yaw: defaultCtl(), pitch: defaultCtl() };
+const ctlTab = () => state.tab === 'gc' ? 'midi' : state.tab;   /* which library file the control is saved with */
+function openPowerPopover(axis, cx, cy) {
+  const c = ctlOf(axis.outputs[state.tab].ctl);
+  const what = state.tab === 'gc' ? 'Ground Control' : state.tab === 'analog' ? 'Analog Out' : 'MIDI';
+  openPopover(`
+    <h3>${axis.label} · ${what} power <span class="pop-tag">MIDI control</span></h3>
+    <div class="pop-rows">
+    ${numRow('CC', 'ctl-cc', c.cc === null ? '' : c.cc, 0, 127, 'placeholder="none"')}
+    ${numRow('On value', 'ctl-on', c.on, 0, 127)}
+    ${numRow('Off value', 'ctl-off', c.off, 0, 127)}
+    </div>
+    <div class="pop-note">A CC on the Receive Channel flips this button: on value → on, off value → off (other values: 64 and up = on). Pedal-alone or docked. Never echoed out. Saved with the ${state.tab === 'gc' ? 'MIDI' : what} Setup.</div>`, cx, cy);
+  const t = state.tab;
+  const set = (k, v) => { axis.outputs[t].ctl = { ...ctlOf(axis.outputs[t].ctl), [k]: v }; commit(axis); updateSaveButtons(); };
+  const ccEl = pop.querySelector('#ctl-cc');
+  ccEl.addEventListener('input', () => { const v = parseInt(ccEl.value, 10); set('cc', isNaN(v) ? null : Math.max(0, Math.min(127, v))); });
+  wireNum(axis, 'ctl-on', v => set('on', Math.max(0, Math.min(127, Math.round(v)))));
+  wireNum(axis, 'ctl-off', v => set('off', Math.max(0, Math.min(127, Math.round(v)))));
+}
 /* the axis power button (Round 5, David Mash): is this axis ON for the current tab?
    MIDI: route !== 'gc' (gc = the program's MIDI muted) · Analog: !off · GC: the unit's bypass */
 function axisOn(axis) {
@@ -1717,6 +1755,8 @@ function saveProgram(asNew, tab) {
   if (tab === 'analog') f.inv = axesInv();
   if (tab === 'midi') f.route = axesRoute();
   if (tab === 'analog') f.off = axesAnaOff();
+  f.ctl = axesCtl(tab);
+  if (tab === 'midi') f.gcCtl = axesCtl('gc');
   saveState();
   renderLibrarian();
   updateSaveButtons();
@@ -1769,6 +1809,8 @@ function loadFile(id, tab) {
     if (tab === 'analog') state.axes[key].outputs.analog.invert = !!fileInv(f)[key];
     if (tab === 'midi') state.axes[key].outputs.midi.route = fileRoute(f)[key] || 'both';
     if (tab === 'analog') state.axes[key].outputs.analog.off = !!fileAnaOff(f)[key];
+    state.axes[key].outputs[tab].ctl = ctlOf(fileCtl(f)[key]);
+    if (tab === 'midi') state.axes[key].outputs.gc.ctl = ctlOf(fileGcCtl(f)[key]);
   }
   state.names[tab] = f.name;
   state.loaded[tab] = id;
@@ -2466,6 +2508,19 @@ function pedalZoneState(zs) {
     zones.forEach((z, i) => { if (z.type === 'switch') { const on = !!((zs[tab][key] >> i) & 1); if (!!simSwitch[z.id] !== on) { simSwitch[z.id] = on; simFlash[z.id] = performance.now(); } } });
   }
   pedalFrozen = zs.frozen;
+  if (zs.power) {   /* a CC (or the pedal's own program) flipped a power button: follow it without re-pushing */
+    let changed = false;
+    for (const key of ['yaw', 'pitch']) {
+      const a = state.axes[key];
+      const mr = zs.power.midi[key] ? 'both' : 'gc';
+      if ((a.outputs.midi.route || 'both') !== mr) { a.outputs.midi.route = mr; changed = true; }
+      if (!!a.outputs.analog.off !== !zs.power.analog[key]) { a.outputs.analog.off = !zs.power.analog[key]; changed = true; }
+    }
+    if (changed) {
+      saveState(); updateSaveButtons();
+      if (!isGC()) for (const key of ['yaw', 'pitch']) { const p = document.querySelector(`.axis-panel[data-axis="${key}"]`); if (!p) continue; const on = axisOn(state.axes[key]); p.querySelector('[data-power]').classList.toggle('on', on); p.classList.toggle('axis-off', !on); }
+    }
+  }
   for (const key of ['yaw', 'pitch']) if (editors[key]) render(state.axes[key]);
 }
 OrbitProgram.init({ onStatus: (text, cls) => Pedal.note(text, cls), onRecall: pedalRecalled, onZoneState: pedalZoneState });

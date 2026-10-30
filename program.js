@@ -48,7 +48,17 @@
     const out = [1, (inv.yaw ? 1 : 0) | (inv.pitch ? 2 : 0) | routeBits(route) | anaBits(aoff)];
     for (const key of ['yaw', 'pitch']) encodeAxis(m ? (m.axes[key] || []) : [], out);
     for (const key of ['yaw', 'pitch']) encodeAxis(a ? (a.axes[key] || []) : [], out);
+    encodeCtl([m && m.ctl, a && a.ctl, m && m.gcCtl], out);
     return new Uint8Array(out);
+  }
+  /* power-button MIDI control (Round 5 step 3): trailer [0x7E] + [cc, on, off] × (MIDI, Analog, GC) × (yaw, pitch); cc 0x7F = none */
+  function encodeCtl(perOutput, out) {
+    out.push(0x7e);
+    for (const o of perOutput) for (const key of ['yaw', 'pitch']) {
+      const c = (o && o[key]) || {};
+      const cc = (c.cc === null || c.cc === undefined || c.cc === '') ? 0x7f : (c.cc & 0x7f);
+      out.push(cc, (c.on === undefined ? 127 : c.on) & 0x7f, (c.off === undefined ? 0 : c.off) & 0x7f);
+    }
   }
   /* per-axis routing (MIDI tab): 'both' (default) · 'midi' = no raw axis to the unit · 'gc' = no MIDI from the program */
   /* header flag bits: 2/3 MIDI off (yaw/pitch) · 4/5 raw axis to the unit off (legacy 'MIDI only' route, no longer set by the UI) · 6/7 analog off */
@@ -60,6 +70,8 @@
     const aoff = { yaw: !!state.axes.yaw.outputs.analog.off, pitch: !!state.axes.pitch.outputs.analog.off };
     const out = [1, (state.axes.yaw.outputs.analog.invert ? 1 : 0) | (state.axes.pitch.outputs.analog.invert ? 2 : 0) | routeBits(route) | anaBits(aoff)];
     for (const tab of ['midi', 'analog']) for (const key of ['yaw', 'pitch']) encodeAxis(state.axes[key].outputs[tab].zones, out);
+    const ctlOf = tab => ({ yaw: state.axes.yaw.outputs[tab] && state.axes.yaw.outputs[tab].ctl, pitch: state.axes.pitch.outputs[tab] && state.axes.pitch.outputs[tab].ctl });
+    encodeCtl([ctlOf('midi'), ctlOf('analog'), ctlOf('gc')], out);
     return new Uint8Array(out);
   }
   /* blob → plain object (verification / read-back) */
@@ -80,6 +92,10 @@
     };
     const o = { invert: { yaw: !!(b[1] & 1), pitch: !!(b[1] & 2) }, midi: {}, analog: {} };
     o.midi.yaw = axis(); o.midi.pitch = axis(); o.analog.yaw = axis(); o.analog.pitch = axis();
+    if (b.length - i >= 19 && b[i] === 0x7e) {
+      i++; o.ctl = {};
+      for (const tab of ['midi', 'analog', 'gc']) { o.ctl[tab] = {}; for (const key of ['yaw', 'pitch']) { o.ctl[tab][key] = { cc: b[i] === 0x7f ? null : b[i], on: b[i + 1], off: b[i + 2] }; i += 3; } }
+    }
     return i === b.length ? o : null;
   }
 
@@ -165,7 +181,9 @@
     }
     if (f.cmd === RSP.ZONE_STATE && f.payload.length >= 5) {
       const p = f.payload;
-      onZoneState({ midi: { yaw: p[0], pitch: p[1] }, analog: { yaw: p[2], pitch: p[3] }, frozen: { yaw: !!(p[4] & 1), pitch: !!(p[4] & 2) } });
+      onZoneState({ midi: { yaw: p[0], pitch: p[1] }, analog: { yaw: p[2], pitch: p[3] }, frozen: { yaw: !!(p[4] & 1), pitch: !!(p[4] & 2) },
+        /* byte 5 (v1.56): the power buttons as the pedal has them — bit set = OFF */
+        power: p.length >= 6 ? { midi: { yaw: !(p[5] & 1), pitch: !(p[5] & 2) }, analog: { yaw: !(p[5] & 4), pitch: !(p[5] & 8) } } : null });
       return;
     }
     if (f.cmd === RSP.SLOT_CHANGED) {
