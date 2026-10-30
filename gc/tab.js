@@ -1061,7 +1061,7 @@
 
   window.GCTab = {
     /* Round 5: the unit's per-axis bypass = the app's GC-tab power buttons */
-    bypass: () => bypassState, setBypass: (axisKey, off) => { if (!connected()) return; send(G.frames.setBypass(axisKey === 'yaw' ? 0 : 1, off)); bypassState = { ...bypassState, [axisKey]: !!off }; },
+    bypass: () => bypassState, setBypass: (axisKey, off) => { if (!connected()) return; tx(G.frames.setBypass(axisKey === 'yaw' ? 0 : 1, off)); log('tx', `SET_BYPASS ${axisKey} ${off ? 'off' : 'on'}`); bypassState = { ...bypassState, [axisKey]: !!off }; },
     init, setLinkKind, linkKind: () => linkKind, connect, disconnect, isConnected: connected,
     bank, active: () => activePreset, activeId: () => (activeSlot ? G.slotLabel(activeSlot.letter, activeSlot.digit) : null),
     load, rename, renameSlot, save, saveNew, remove, refreshBank, nameOf, describe, idOf, parseId, log,
