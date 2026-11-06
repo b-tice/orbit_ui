@@ -313,9 +313,9 @@ svg .zone-label { letter-spacing: .08em; }
 .sl-tools .ghostbtn { padding: 7px 10px; flex: none; }
 #miBank { width: 48px; }
 /* set list dialog */
-#slWrap { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 18px; }
-#slWrap[hidden] { display: none; }
-#slScrim { position: absolute; inset: 0; background: hsl(250 45% 3% / .7); }
+#slWrap, #soWrap { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 18px; }
+#slWrap[hidden], #soWrap[hidden] { display: none; }
+#slScrim, #soScrim { position: absolute; inset: 0; background: hsl(250 45% 3% / .7); }
 #slDialog { position: relative; width: min(360px, 100%); padding: 18px; box-sizing: border-box; }
 #slDialog .modal-head { margin-bottom: 12px; }
 #slDialog .pop-row input { width: 120px; }
@@ -458,3 +458,16 @@ svg .zone-label { letter-spacing: .08em; }
 .rt-spacer { display: inline-block; width: 62px; }
 .rt-addcc { font-family: inherit; font-size: 8px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-dim); background: var(--well); border: 1px dashed var(--well-line); border-radius: 6px; padding: 4px 8px; cursor: pointer; }
 .rt-addcc:hover { color: var(--ink); border-color: var(--span-edge); }
+
+/* ── Set Lists window (bank order) ──────────────────────────────── */
+#soDialog { position: relative; width: min(420px, 100%); padding: 18px; box-sizing: border-box; }
+#soDialog .modal-head { margin-bottom: 12px; }
+#soDialog .pop-note { margin: 10px 0 2px; }
+.so-list { max-height: 60vh; }
+.so-row { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.so-row .pc { min-width: 2ch; }
+.so-count { margin-left: auto; font-family: var(--mono); font-size: 9px; color: var(--ink-dim); white-space: nowrap; }
+.so-arrows { display: inline-flex; gap: 2px; margin-left: 6px; }
+.so-arrows .rowbtn[disabled] { opacity: .25; cursor: default; }
+.so-ghost { position: fixed; z-index: 80; pointer-events: none; opacity: .9; list-style: none; }
+.so-ph { border: 1px dashed var(--sim); border-radius: 8px; box-sizing: border-box; background: hsl(16 100% 60% / .06); }

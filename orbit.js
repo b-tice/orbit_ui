@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.58';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.59';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -1997,7 +1997,10 @@ function renderLibrarian() {
 /* ── Set List tools: one dropdown, + new, edit (dialog) ──────────── */
 
 const slSelect = document.getElementById('slSelect');
+/* Set Lists are listed in BANK order (David Mash, Nov 2026): a stable sort by bank, creation order breaks ties */
+function sortSetlists() { state.setlists = state.setlists.map((l, i) => [l, i]).sort((a, b) => (a[0].bank - b[0].bank) || (a[1] - b[1])).map(x => x[0]); }
 function renderSetlistTools() {
+  sortSetlists();
   const l = activeSL();
   slSelect.innerHTML = state.setlists.map(x =>
     `<option value="${x.id}"${x.id === l.id ? ' selected' : ''}>${esc(x.name)} · bank ${x.bank + 1}</option>`).join('');
@@ -2032,6 +2035,68 @@ function openSetlistDialog(l) {
   slName.focus(); slName.select();
 }
 function closeSetlistDialog() { slWrap.hidden = true; slEditing = null; }
+/* ── Set Lists window: drag (or arrows) to set the bank order ─────────────
+   the list IS the bank order: after a move, banks are renumbered 1..n in list order
+   (shown 1-based; stored 0-based). The pedal's slot files follow on the next sync. */
+const soWrap = document.getElementById('soWrap'), soList = document.getElementById('soList');
+function renumberBanks() { state.setlists.forEach((l, i) => { l.bank = i; }); }
+function renderOrderWindow() {
+  sortSetlists();
+  const n = state.setlists.length;
+  soList.innerHTML = state.setlists.map((l, i) => `
+    <li class="set-row so-row${l.id === state.activeSetlist ? ' on' : ''}" data-id="${l.id}" data-idx="${i}">
+      <span class="pc" title="bank">${i + 1}</span>
+      <span class="lib-name">${esc(l.name)}</span>
+      <span class="so-count">${l.slots.length} slot${l.slots.length === 1 ? '' : 's'}</span>
+      <span class="so-arrows"><button class="rowbtn" data-up type="button" title="move up (lower bank)"${i === 0 ? ' disabled' : ''}>▲</button><button class="rowbtn" data-down type="button" title="move down (higher bank)"${i === n - 1 ? ' disabled' : ''}>▼</button></span>
+    </li>`).join('');
+}
+function moveSetlist(from, to) {
+  if (from === to || to < 0 || to >= state.setlists.length) return;
+  const [l] = state.setlists.splice(from, 1); state.setlists.splice(to, 0, l);
+  renumberBanks(); saveState(); renderOrderWindow(); renderLibrarian();
+}
+function openOrderWindow() { renderOrderWindow(); soWrap.hidden = false; }
+function closeOrderWindow() { soWrap.hidden = true; }
+document.getElementById('slOrder').addEventListener('click', openOrderWindow);
+document.getElementById('soClose').addEventListener('click', closeOrderWindow);
+document.getElementById('soScrim').addEventListener('click', closeOrderWindow);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !soWrap.hidden) closeOrderWindow(); });
+soList.addEventListener('click', e => {
+  const row = e.target.closest('.so-row'); if (!row) return;
+  const i = +row.dataset.idx;
+  if (e.target.closest('[data-up]')) moveSetlist(i, i - 1);
+  else if (e.target.closest('[data-down]')) moveSetlist(i, i + 1);
+});
+/* drag a row: lift after 6 px, a placeholder marks the drop, release renumbers */
+soList.addEventListener('pointerdown', e => {
+  const row = e.target.closest('.so-row');
+  if (!row || e.target.closest('button') || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  const from = +row.dataset.idx, startY = e.clientY;
+  let ghost = null, ph = null, dropIdx = from;
+  const rows = () => [...soList.querySelectorAll('.so-row')].filter(r => r !== row);
+  const move = ev => {
+    if (!ghost) {
+      if (Math.abs(ev.clientY - startY) < 6) return;
+      ghost = row.cloneNode(true); ghost.classList.add('lifting', 'so-ghost');
+      const r = row.getBoundingClientRect(); ghost.style.width = r.width + 'px'; ghost.style.left = r.left + 'px';
+      document.body.appendChild(ghost);
+      ph = document.createElement('li'); ph.className = 'so-ph'; ph.style.height = r.height + 'px';
+      row.replaceWith(ph);
+    }
+    ghost.style.top = (ev.clientY - 14) + 'px';
+    const others = rows(); dropIdx = others.length;
+    for (let k = 0; k < others.length; k++) { const r = others[k].getBoundingClientRect(); if (ev.clientY < r.top + r.height / 2) { dropIdx = k; break; } }
+    const ref = others[dropIdx]; if (ref) soList.insertBefore(ph, ref); else soList.appendChild(ph);
+  };
+  const up = () => {
+    document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', up);
+    if (!ghost) return;
+    ghost.remove();
+    moveSetlist(from, dropIdx);
+  };
+  document.addEventListener('pointermove', move); document.addEventListener('pointerup', up); document.addEventListener('pointercancel', up);
+});
 document.getElementById('slNew').addEventListener('click', () => {
   if (state.setlists.length >= MAX_SETLISTS) { alert(`At most ${MAX_SETLISTS} Set Lists.`); return; }
   openSetlistDialog(null);

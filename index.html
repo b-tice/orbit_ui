@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Michroma&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="ambient.css">
-<link rel="stylesheet" href="orbit.css?v=1.58">
+<link rel="stylesheet" href="orbit.css?v=1.59">
 <link rel="stylesheet" href="gc.css?v=1.55">
 </head>
 <body class="ambient amb-surface">
@@ -62,6 +62,7 @@
           <select id="slSelect" title="which Set List you are editing"></select>
           <button class="ghostbtn" id="slNew" type="button" title="create a new Set List">+ new</button>
           <button class="ghostbtn" id="slEdit" type="button" title="rename, re-bank or delete this Set List">edit</button>
+          <button class="ghostbtn" id="slOrder" type="button" title="all Set Lists: drag to set the bank order">order</button>
         </div>
       </div>
       <ul class="lib-list" id="setList"></ul>
@@ -106,6 +107,19 @@
 
 <div id="popover" class="ambient amb-surface amb-chamfer amb-elevation-3 amb-mat-blasted amb-rounded-lg" hidden></div>
 
+<div id="soWrap" hidden>
+  <div id="soScrim"></div>
+  <div id="soDialog" class="ambient amb-surface amb-chamfer amb-elevation-3 amb-mat-blasted amb-rounded-xl">
+    <div class="modal-head"><h2>SET LISTS · BANK ORDER</h2></div>
+    <ul class="lib-list so-list" id="soList"></ul>
+    <div class="pop-note">drag a Set List (or use the arrows) — the order is the bank order: first = bank 1, and so on. A Program Change with that Bank Select recalls from it.</div>
+    <div class="modal-foot">
+      <button class="amb-button ambx-press-sm" id="soClose" type="button">
+        <span class="amb-button-cap ambient amb-chamfer amb-surface amb-heading-3">Done</span>
+      </button>
+    </div>
+  </div>
+</div>
 <div id="slWrap" hidden>
   <div id="slScrim"></div>
   <div id="slDialog" class="ambient amb-surface amb-chamfer amb-elevation-3 amb-mat-blasted amb-rounded-xl">
@@ -154,7 +168,7 @@
 <script src="link.js?v=1.55"></script>
 <script src="gc/tab.js?v=1.55"></script>
 <script src="pedal.js?v=1.55"></script>
-<script src="program.js?v=1.58"></script>
-<script src="orbit.js?v=1.58"></script>
+<script src="program.js?v=1.59"></script>
+<script src="orbit.js?v=1.59"></script>
 </body>
 </html>
