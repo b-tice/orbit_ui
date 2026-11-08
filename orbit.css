@@ -469,7 +469,5 @@ svg .zone-label { letter-spacing: .08em; }
 .so-row { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
 .so-row .pc { min-width: 2ch; }
 .so-count { margin-left: auto; font-family: var(--mono); font-size: 9px; color: var(--ink-dim); white-space: nowrap; }
-.so-arrows { display: inline-flex; gap: 2px; margin-left: 6px; }
-.so-arrows .rowbtn[disabled] { opacity: .25; cursor: default; }
 .so-ghost { position: fixed; z-index: 80; pointer-events: none; opacity: .9; list-style: none; }
 .so-ph { border: 1px dashed var(--sim); border-radius: 8px; box-sizing: border-box; background: hsl(16 100% 60% / .06); }
