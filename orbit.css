@@ -362,7 +362,9 @@ svg .zone-label { letter-spacing: .08em; }
   flex: 1; min-width: 0; font-family: inherit; font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
   color: var(--ink); background: var(--well); border: 1px solid var(--sim); border-radius: 6px; padding: 4px 6px; outline: none;
 }
-.set-row.none .lib-name { color: var(--ink-dim); font-style: italic; }
+.set-row.none .lib-name { color: var(--ink-dim); font-style: italic; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.set-row.none .slot-others { font-style: normal; font-family: var(--mono); font-size: 9px; letter-spacing: .04em; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-row.none .slot-add { font-size: 8px; letter-spacing: .1em; text-transform: uppercase; opacity: .7; }
 .set-row.onto { border-color: var(--sim); box-shadow: 0 0 10px hsl(16 100% 60% / .5); }
 .pc {
   font-family: var(--mono); font-size: 11px; color: var(--sim);

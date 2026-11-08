@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.59';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.60';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -1958,8 +1958,8 @@ function renderGcLibrarian() {
       <li class="set-row${sl.gc && sl.gc === active ? ' on' : ''}${sl.gc ? '' : ' none'}" data-idx="${i}">
         <span class="pc">${i + 1}</span>
         ${sl.gc ? `<span class="lib-id">${esc(sl.gc)}</span>` : ''}
-        <span class="lib-name">${sl.gc ? (nm ? esc(nm) : (nm === '' ? '<span class="unnamed">unnamed</span>' : '<span class="unnamed">not on this unit</span>')) : '\u2014 no GC setup \u2014'}</span>
-        <button class="rowbtn" data-del type="button" title="remove slot">×</button>
+        <span class="lib-name">${sl.gc ? (nm ? esc(nm) : (nm === '' ? '<span class="unnamed">unnamed</span>' : '<span class="unnamed">not on this unit</span>')) : emptySlotLabel(sl, 'gc')}</span>
+        <button class="rowbtn" data-del type="button" title="${SLOT_DEL_TIP}">×</button>
       </li>`;
     }).join('')
     : `<li class="lib-empty">drag Setups here — order sets the PC #</li>`;
@@ -1985,8 +1985,8 @@ function renderLibrarian() {
       return `
       <li class="set-row${mine && mine.id === state.loaded[tab] ? ' on' : ''}${mine ? '' : ' none'}" data-idx="${i}">
         <span class="pc">${i + 1}</span>
-        <span class="lib-name">${mine ? esc(mine.name) : '— no ' + OUTPUTS[tab].tag + ' setup —'}</span>
-        <button class="rowbtn" data-del type="button" title="remove slot">×</button>
+        <span class="lib-name">${mine ? esc(mine.name) : emptySlotLabel(sl, tab)}</span>
+        <button class="rowbtn" data-del type="button" title="${SLOT_DEL_TIP}">×</button>
       </li>`;
     }).join('')
     : `<li class="lib-empty">drag Setups here — order sets the PC #</li>`;
@@ -1997,6 +1997,22 @@ function renderLibrarian() {
 /* ── Set List tools: one dropdown, + new, edit (dialog) ──────────── */
 
 const slSelect = document.getElementById('slSelect');
+/* a slot row on a tab where the slot has no Setup of that kind: say what the slot DOES hold
+   (its other outputs' Setups), so "— no GC setup —" rows stop looking like strays (David Mash, Nov 2026) */
+function slotOthers(sl, tab) {
+  const parts = [];
+  if (tab !== 'midi' && sl.midi) { const f = libFile(sl.midi, 'midi'); if (f) parts.push('MIDI ' + f.name); }
+  if (tab !== 'analog' && sl.analog) { const f = libFile(sl.analog, 'analog'); if (f) parts.push('ANALOG ' + f.name); }
+  if (tab !== 'gc' && sl.gc) { const nm = typeof GCTab !== 'undefined' && GCTab.nameOf ? GCTab.nameOf(sl.gc) : ''; parts.push('GC ' + (nm || sl.gc)); }
+  return parts;
+}
+function emptySlotLabel(sl, tab) {
+  const others = slotOthers(sl, tab), what = tab === 'gc' ? 'GC' : OUTPUTS[tab].tag;
+  return others.length
+    ? `<span class="slot-others" title="this slot's other Setups — drop a ${what} Setup on this row to add one">${esc(others.join(' · '))}</span><span class="slot-add">no ${what} setup · drop one here</span>`
+    : `no ${what} setup — drop one here`;
+}
+const SLOT_DEL_TIP = 'remove this slot from the Set List (the Setups stay in their libraries)';
 /* Set Lists are listed in BANK order (David Mash, Nov 2026): a stable sort by bank, creation order breaks ties */
 function sortSetlists() { state.setlists = state.setlists.map((l, i) => [l, i]).sort((a, b) => (a[0].bank - b[0].bank) || (a[1] - b[1])).map(x => x[0]); }
 function renderSetlistTools() {
