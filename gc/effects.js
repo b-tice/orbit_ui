@@ -95,6 +95,35 @@ const EFFECTS = [
   { id: 15, name: 'Volume', params: [
     { name: 'Level',     unit: '',   defaultVal: 1.0,    min: 0,    max: 1,     step: 0.01, decimals: 2 },
   ]},
+  /* Nov 2026 (David Mash): EQ, Stereo Delay, Plate, Room */
+  { id: 16, name: 'EQ', params: [
+    { name: 'HPF',       unit: 'Hz', defaultVal: 20,     min: 20,   max: 1000,  step: 10,   decimals: 0 },
+    { name: 'LPF',       unit: 'Hz', defaultVal: 20000,  min: 1000, max: 20000, step: 100,  decimals: 0 },
+    { name: 'Peak Hz',   unit: 'Hz', defaultVal: 800,    min: 100,  max: 8000,  step: 10,   decimals: 0 },
+    { name: 'Peak dB',   unit: 'dB', defaultVal: 0,      min: -15,  max: 15,    step: 0.5,  decimals: 1 },
+    { name: 'Peak Q',    unit: '',   defaultVal: 1.0,    min: 0.3,  max: 5,     step: 0.1,  decimals: 1 },
+  ]},
+  { id: 17, name: 'Stereo Delay', params: [
+    { name: 'Time L',    unit: 'ms', defaultVal: 375,    min: 50,   max: 1200,  step: 5,    decimals: 0 },
+    { name: 'Time R',    unit: 'ms', defaultVal: 500,    min: 50,   max: 1200,  step: 5,    decimals: 0 },
+    { name: 'Feedback',  unit: '',   defaultVal: 0.4,    min: 0,    max: 0.95,  step: 0.01, decimals: 2 },
+    { name: 'Mix',       unit: '',   defaultVal: 0.35,   min: 0,    max: 1,     step: 0.01, decimals: 2 },
+    { name: 'Tone',      unit: 'Hz', defaultVal: 4000,   min: 500,  max: 12000, step: 100,  decimals: 0 },
+  ]},
+  { id: 18, name: 'Plate', params: [
+    { name: 'Mix',       unit: '',   defaultVal: 0.3,    min: 0,    max: 1,     step: 0.01, decimals: 2 },
+    { name: 'Decay',     unit: '',   defaultVal: 0.6,    min: 0.2,  max: 0.95,  step: 0.01, decimals: 2 },
+    { name: 'Damping',   unit: '',   defaultVal: 0.4,    min: 0,    max: 1,     step: 0.01, decimals: 2 },
+    { name: 'PreDelay',  unit: 'ms', defaultVal: 10,     min: 0,    max: 120,   step: 1,    decimals: 0 },
+    { name: 'Size',      unit: '',   defaultVal: 1.0,    min: 0.5,  max: 1.5,   step: 0.01, decimals: 2 },
+  ]},
+  { id: 19, name: 'Room', params: [
+    { name: 'Mix',       unit: '',   defaultVal: 0.25,   min: 0,    max: 1,     step: 0.01, decimals: 2 },
+    { name: 'Decay',     unit: '',   defaultVal: 0.4,    min: 0.2,  max: 0.95,  step: 0.01, decimals: 2 },
+    { name: 'Damping',   unit: '',   defaultVal: 0.6,    min: 0,    max: 1,     step: 0.01, decimals: 2 },
+    { name: 'PreDelay',  unit: 'ms', defaultVal: 5,      min: 0,    max: 60,    step: 1,    decimals: 0 },
+    { name: 'Size',      unit: '',   defaultVal: 0.5,    min: 0.3,  max: 1.0,   step: 0.01, decimals: 2 },
+  ]},
 ];
 
 function formatValue(p, v) {

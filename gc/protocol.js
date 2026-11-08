@@ -36,12 +36,13 @@
   const nameOf = (table, v) => { for (const k in table) if (table[k] === v) return k; return null; };
   const frameName = cmd => nameOf(REPLY, cmd) || nameOf(CMD, cmd) || ('0x' + cmd.toString(16).padStart(2, '0'));
 
-  const MAX_EFFECTS = 16;
+  const MAX_EFFECTS = 32;   /* id space; 0-19 in use (firmware 2026-11-07) */
   const PRESET_NAME_MAX = 10;
   const EFFECT_NAMES = [
     'Shimmer Reverb', 'Vox Wah', 'Pong Delay', 'Big Muff', 'Whammy', 'Chorus',
     'Fuzz Face', 'Octavia', 'Carbon Copy', 'Hall', 'Flange', 'Tube Screamer',
     'Tremolo', 'Ring Mod', 'Harmonizer', 'Volume',
+    'EQ', 'Stereo Delay', 'Plate', 'Room',
   ];
   /* the pedal's LED / screen colours, by index (matches gc_ui menu.cpp) */
   const COLOR_PALETTE = [
@@ -167,6 +168,12 @@
     if (p.length > o) {
       const n = Math.min(p[o], MAX_EFFECTS); o++;
       for (let i = 0; i < n && o + i < p.length; i++) info.chain.push(p[o + i]);
+      o += n;
+    }
+    /* firmware 2026-11-07: the high 16 bits of each axis mask follow the chain (effects 16-31) */
+    if (p.length >= o + 4) {
+      info.axisEffectsPitch = (info.axisEffectsPitch | (bytesToU16(p, o) << 16)) >>> 0;
+      info.axisEffectsYaw = (info.axisEffectsYaw | (bytesToU16(p, o + 2) << 16)) >>> 0;
     }
     /* until a PRESET_MASKS frame arrives, assume each axis drives its primary param */
     for (let e = 0; e < MAX_EFFECTS; e++) {
@@ -192,9 +199,10 @@
     const chain = (info.chain || []).slice(0, MAX_EFFECTS);
     return encodeFrame(REPLY.PRESET_INFO, cat(
       b(info.letter, info.digit, info.colorIdx),
-      u16ToBytes(info.axisEffectsPitch), u16ToBytes(info.axisEffectsYaw),
+      u16ToBytes(info.axisEffectsPitch & 0xffff), u16ToBytes(info.axisEffectsYaw & 0xffff),
       b(info.pitchEff, info.pitchPar, info.yawEff, info.yawPar),
-      b(nb.length), nb, b(chain.length), new Uint8Array(chain)));
+      b(nb.length), nb, b(chain.length), new Uint8Array(chain),
+      u16ToBytes((info.axisEffectsPitch >>> 16) & 0xffff), u16ToBytes((info.axisEffectsYaw >>> 16) & 0xffff)));
   }
   function buildPresetMasks(info) {
     return encodeFrame(REPLY.PRESET_MASKS, cat(b(info.letter, info.digit),
