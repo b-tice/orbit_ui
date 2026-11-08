@@ -45,6 +45,7 @@
     return `
     <section class="${PANEL}" id="gc-conn">
       <div class="gc-head"><h3>CONNECTION</h3><span class="gc-status" id="gc-status">not connected</span></div>
+      <div class="gc-row gc-dsp-row"><span class="gc-status" id="gc-dsp" title="the DSP board, once a second: audio-thread load (average and the second's peak), how many times it had to re-initialise after a bad sample, how many bad samples it saw since power-up, and the highest delay/reverb feedback currently set">DSP —</span></div>
       <div class="gc-row">
         <select id="gc-link" class="gc-select" title="how to reach the Ground Control"></select>
         <button class="ghostbtn" id="gc-connect" type="button">connect</button>
@@ -600,6 +601,7 @@
      other way from the unit's state after a Setup loads. */
   /* lastApplied is declared with the other state at the top */
   let syncUntil = 0, decompileTimer = null;
+  let lastDspRec = null;   /* DSP_STATS: last recovery count seen, to log each new one */
   const paramDef = (eff, par) => ((EFFECTS[eff] || {}).params || [])[par] || null;
   const sameLut = (a, b) => a && b && a.length === b.length && a.every((v, i) => v === b[i]);
 
@@ -854,6 +856,16 @@
     if (f.cmd === R.PRESET_MASKS) { handlePresetMasks(f.payload); return; }
     if (f.cmd === R.LIST_END) { handleListEnd(); return; }
     if (f.cmd === R.LOADED) { handleLoaded(f.payload); return; }
+    if (f.cmd === R.DSP_STATS) {
+      const p = f.payload;
+      if (p.length >= 7 && ui.dsp) {
+        const rec = p[2] | (p[3] << 8), nan = p[4] | (p[5] << 8), fb = (p[6] / 100).toFixed(2);
+        ui.dsp.textContent = `DSP load ${p[0]}% (peak ${p[1]}%) · recoveries ${rec} · bad samples ${nan} · max feedback ${fb}`;
+        ui.dsp.className = 'gc-status' + (rec > 0 || p[1] >= 90 ? ' warn' : '');
+        if (rec !== lastDspRec) { if (lastDspRec !== null) log('info', `DSP recovered (re-init #${rec}) — a click`); lastDspRec = rec; }
+      }
+      return;
+    }
     if (f.cmd === R.BYPASS_STATE) { if (f.payload.length >= 2) { bypassState = { yaw: !!f.payload[0], pitch: !!f.payload[1] }; if (hooks.onBypass) hooks.onBypass(bypassState); } return; }
     if (f.cmd === R.PRESET_VALUES || f.cmd === R.PRESET_THRESH || f.cmd === R.PRESET_CURVE || f.cmd === R.PRESET_DUMP_END) { handleDumpFrame(f); return; }
     if (f.cmd === CMD.SET_THRESH) {
@@ -1025,7 +1037,7 @@
     mount.innerHTML = template();
     const $ = id => mount.querySelector('#' + id);
     ui = {
-      mount, status: $('gc-status'), bankStatus: $('gc-bank-status'), linkSel: $('gc-link'),
+      mount, status: $('gc-status'), dsp: $('gc-dsp'), bankStatus: $('gc-bank-status'), linkSel: $('gc-link'),
       connect: $('gc-connect'), disconnect: $('gc-disconnect'), refresh: $('gc-refresh'), ping: $('gc-ping'),
       active: $('gc-active'), dirty: $('gc-dirty'), swatch: $('gc-swatch'), slot: $('gc-slot'), name: $('gc-name'),
       save: $('gc-save'), discard: $('gc-discard'), delete: $('gc-delete'),

@@ -12,6 +12,9 @@
 .gc-head h3 { margin: 0; font-size: 11px; font-weight: 400; letter-spacing: .18em; color: var(--ink); }
 .gc-head .ghostbtn { padding: 5px 10px; }
 .gc-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.gc-dsp-row { margin: -2px 0 8px; }
+.gc-dsp-row .gc-status { font-family: var(--mono); font-size: 10px; }
+.gc-status.warn { color: var(--warn); }
 .gc-row:last-child { margin-bottom: 0; }
 .gc-status { font-family: var(--mono); font-size: 10px; color: var(--ink-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gc-status.ok { color: #2dd4bf; }
