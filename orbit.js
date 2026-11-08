@@ -19,7 +19,7 @@
 'use strict';
 
 /* Bump on every feature addition; shown in the header and exports. */
-const APP_VERSION = '1.60';   /* also bump the ?v= on the script tags in index.html */
+const APP_VERSION = '1.61';   /* also bump the ?v= on the script tags in index.html */
 
 /* ── constants ───────────────────────────────────────────────────── */
 
@@ -211,6 +211,7 @@ function defaultState() {
     names: { midi: 'INIT', analog: 'INIT', gc: '' },   /* SETUP field, per output tab */
     loaded: { midi: null, analog: null, gc: null },     /* library file id per output tab (gc: the unit's slot id) */
     gcSim: false,                                /* show the GROUND CONTROL tab against a simulated unit */
+    gcZoneMemory: {},                            /* v1.61: the app's own GC zones per unit slot (see gcRemember) */
     vertPitch: false,                            /* test: YAW on top, the PITCH strip drawn upright and centred under it */
     pitchCentered: true,                         /* …centred under YAW (true) or to its right at full height (false) */
     axes: {
@@ -351,6 +352,7 @@ function migrateLibrary(s) {
   s.names = s.names || { midi: 'INIT', analog: 'INIT' };
   if (s.loaded.gc === undefined) s.loaded.gc = null;
   for (const k of ['yaw', 'pitch']) if (s.axes[k] && s.axes[k].outputs && !s.axes[k].outputs.gc) s.axes[k].outputs.gc = { zones: [] };
+  if (!s.gcZoneMemory) s.gcZoneMemory = {};   /* v1.61: the app's own GC zones per unit slot, keyed by slot label */
   if (s.names.gc === undefined) s.names.gc = '';
   s.gcSim = !!s.gcSim;
   s.vertPitch = !!(s.vertPitch || s.centerView); delete s.centerView;
@@ -1234,9 +1236,46 @@ function gcCompileAxis(axis) {
     list.push({ eff: z0.eff, par: z0.par, lo: qlo, hi: qhi, lut });
   }
   GCTab.applyAxis(axis.key === 'pitch' ? 0 : 1, list);
+  gcLastTables[axis.key] = list;
+  gcRemember();
+}
+/* ── GC zone memory (David Mash, Nov 2026) ─────────────────────────────────
+   The unit stores one curve per (effect, parameter) per axis, so two zones with a
+   Dead zone between them, or any multi-zone arrangement on one parameter, come back
+   from the unit as ONE zone when a Setup loads (decompile). The sound is identical;
+   only the drawing changed, which surprised David. The app now remembers its own
+   zones per unit slot together with a fingerprint of the tables they compiled to.
+   When a Setup loads and the unit's tables match that fingerprint, the remembered
+   zones are shown; otherwise (edited on the unit, another device, a partial sync)
+   the decompiled zones are. */
+const gcLastTables = { pitch: [], yaw: [] };
+function gcFingerprint(tables) {
+  const one = list => (list || []).map(a => `${a.eff},${a.par},${(+a.lo).toFixed(3)},${(+a.hi).toFixed(3)},${Array.from(a.lut || []).join('.')}`).sort().join('|');
+  return one(tables.pitch) + '#' + one(tables.yaw);
+}
+function gcRemember() {
+  const slot = state.loaded.gc;
+  if (!slot) return;
+  if (!state.gcZoneMemory) state.gcZoneMemory = {};
+  state.gcZoneMemory[slot] = {
+    fp: gcFingerprint(gcLastTables),
+    zones: { pitch: JSON.parse(JSON.stringify(state.axes.pitch.outputs.gc.zones)), yaw: JSON.parse(JSON.stringify(state.axes.yaw.outputs.gc.zones)) },
+  };
+  saveState();
 }
 /* the unit's assignments → zones (after a Setup loads) */
-function gcAdoptZones(byAxis) {
+function gcAdoptZones(byAxis, tables) {
+  if (tables) { gcLastTables.pitch = tables[0] || []; gcLastTables.yaw = tables[1] || []; }
+  const mem = state.loaded.gc && state.gcZoneMemory ? state.gcZoneMemory[state.loaded.gc] : null;
+  if (mem && tables && mem.fp === gcFingerprint(gcLastTables)) {
+    /* the unit holds exactly what our zones compiled to: show OUR zones (multi-zone
+       arrangements survive the round trip) */
+    for (const key of ['pitch', 'yaw']) state.axes[key].outputs.gc.zones = JSON.parse(JSON.stringify(mem.zones[key]));
+    sel = null;
+    if (isGC()) { for (const key of ['yaw', 'pitch']) if (editors[key]) render(state.axes[key]); }
+    saveState(); updateSaveButtons();
+    return;
+  }
   for (const key of ['pitch', 'yaw']) {
     const list = byAxis[key === 'pitch' ? 0 : 1] || [];
     const old = state.axes[key].outputs.gc.zones;
@@ -1253,6 +1292,7 @@ function gcAdoptZones(byAxis) {
   if (isGC()) { for (const key of ['yaw', 'pitch']) if (editors[key]) render(state.axes[key]); }
   saveState();
   updateSaveButtons();
+  if (state.loaded.gc && !mem && tables) gcRemember();   /* first sight of this slot: start its memory from the unit's tables */
 }
 
 /* an axis's Save lights when its zones (or the Setup name) differ from the
@@ -1606,7 +1646,7 @@ function openZonePopover(axis, z, cx, cy) {
       <div class="pop-row"><label>Sweep</label><span class="pop-note">${GCFX.formatValue(d, gcUnits(z, Math.min(...z.points.map(q => q.y))))} → ${GCFX.formatValue(d, gcUnits(z, Math.max(...z.points.map(q => q.y))))}</span></div>
       <div class="pop-row"><label>Response curve</label>
         <button class="ghostbtn ${z.smooth ? 'on' : ''}" id="zsmooth" type="button" title="linear ↔ smooth (monotone cubic) interpolation between the points">smooth</button></div>
-      <div class="pop-note">drag the end points to set the sweep range in ${d.name}'s own units · double-click the curve to add points · outside the zone the unit holds the nearer end</div>
+      <div class="pop-note">drag the end points to set the sweep range in ${d.name}'s own units · double-click the curve to add points · outside the zone the unit holds the nearer end · zones on the same parameter become one curve on the unit (the app keeps your zones)</div>
       ${ccConflict(axis, z) ? `<div class="pop-note warn">overlaps another zone on the same parameter — where they overlap only the topmost (narrowest) one drives it</div>` : ''}`;
   } else if (z.type === 'ctl') {
     rows = `${analog ? '' : routingHtml(z)}

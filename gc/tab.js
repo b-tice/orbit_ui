@@ -693,7 +693,10 @@
       lastApplied[a] = applied;
     }
     refreshCurveVisibility();
-    if (hooks.onSetupZones) hooks.onSetupZones(out);
+    /* the unit's tables themselves ride along, so the app can tell whether its own
+       remembered zones for this slot still compile to exactly these tables */
+    const tables = [0, 1].map(a => [...lastApplied[a].entries()].map(([k, v]) => { const [eff, par] = k.split(',').map(Number); return { eff, par, lo: v.lo, hi: v.hi, lut: v.lut }; }));
+    if (hooks.onSetupZones) hooks.onSetupZones(out, tables);
   }
 
   /* ---- backup / restore of the unit's bank ------------------------------
